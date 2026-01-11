@@ -1,49 +1,102 @@
-# 🎬 Emby Library Optimizer (HandBrake 10-bit NVENC)
+@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+chcp 65001 >nul
 
-Ce script Batch automatisé permet de traiter massivement une bibliothèque multimédia pour l'optimiser pour **Emby**, **Plex** ou **Jellyfin**. Il utilise l'accélération matérielle NVIDIA pour convertir vos vidéos en HEVC 10-bit.
+:MENU
+cls
+echo ============================================
+echo      OPTIMISEUR HANDBRAKE 10-BIT V18.7
+echo ============================================
+echo STATUS : Arborescence Logs Miroir (Z:\Logs)
+echo ============================================
+echo [S, T, U, V, W, X, Y] ou [Q] Quitter
+echo --------------------------------------------
 
-## 🚀 Fonctionnalités Clés
+choice /c STUVWXYQ /n /m "Appuyez sur la lettre du lecteur : "
+set SEL=%errorlevel%
+if %SEL% EQU 8 exit /b
 
-- **Encodage Hardware** : Utilisation de `nvenc_h265_10bit` pour une vitesse de traitement ultra-rapide.
-- **Auto-Downscale** : Réduction automatique des sources 4K en **1080p (Full HD)** pour économiser l'espace.
-- **Logique de Langues** : 
-  - Standard : Pistes audio **Françaises**.
-  - Détection automatique (Lecteurs T & W) : Priorité **Japonais + Français** (idéal pour les Animes).
-- **Système de Logs Miroir** : Création d'une empreinte (témoin) dans `Z:\Logs` pour éviter de retraiter un fichier déjà optimisé.
-- **Gestion des Sous-titres** : Conservation de l'intégralité des pistes de sous-titres et des chapitres.
+:: --- CONFIGURATION ---
+if %SEL% EQU 1 set "L_SFX=S"
+if %SEL% EQU 2 set "L_SFX=T"
+if %SEL% EQU 3 set "L_SFX=U"
+if %SEL% EQU 4 set "L_SFX=V"
+if %SEL% EQU 5 set "L_SFX=W"
+if %SEL% EQU 6 set "L_SFX=X"
+if %SEL% EQU 7 set "L_SFX=Y"
 
-## 🛠️ Configuration Requise
+set "ROOT=%L_SFX%:\"
+set "T_DIR=Z:\Encoder_Emby"
+set "L_ROOT=Z:\Encoder_Emby\Logs\Logs_%L_SFX%"
+set "HB=C:\Program Files\HandBrake\HandBrakeCLI.exe"
 
-1. **HandBrakeCLI** : Doit être installé dans `C:\Program Files\HandBrake\`.
-2. **GPU NVIDIA** : Compatible avec l'encodage HEVC 10-bit.
-3. **Structure des Lecteurs** :
-   - Sources : Lecteurs mappés de `S:` à `Y:`.
-   - Travail & Logs : Un lecteur `Z:` pour le dossier temporaire et l'archivage des logs.
+:: --- CORRECTION DE LA LOGIQUE DES LANGUES ---
+set "LANG=fra"
+if "%L_SFX%"=="T" set "LANG=jpn,fra"
+if "%L_SFX%"=="W" set "LANG=jpn,fra"
 
-## 📖 Utilisation
+echo [INFO] Analyse de %ROOT%...
 
-1. Lancez le script en mode Administrateur (si nécessaire pour l'accès aux lecteurs).
-2. Choisissez la lettre du lecteur à traiter via le menu interactif.
-3. Le script scanne récursivement tous les sous-dossiers.
-4. Une fois terminé, le fichier original est remplacé par la version optimisée et un témoin `.txt` est créé dans `Z:\Encoder_Emby\Logs\`.
+:: --- BOUCLE DE SCAN RÉCURSIVE ---
+for /f "delims=" %%F in ('dir "%ROOT%*.mkv" "%ROOT%*.mp4" "%ROOT%*.avi" "%ROOT%*.mov" "%ROOT%*.wmv" "%ROOT%*.m4v" "%ROOT%*.mpeg" /s /b 2^>nul') do (
+    
+    set "F_PATH=%%~dpF"
+    set "F_BASE=%%~nF"
+    
+    setlocal EnableDelayedExpansion
+    set "REL_PATH=!F_PATH:%ROOT%=!"
+    set "LOG_DIR=%L_ROOT%\!REL_PATH!"
+    set "LOG_FILE=!LOG_DIR!!F_BASE!.txt"
+    
+    if exist "!LOG_FILE!" (
+        echo [IGNORE] !F_BASE! [cite: 3]
+        endlocal
+    ) else (
+        endlocal
+        call :PROCESS "%%F"
+    )
+)
+echo [FIN] Scan terminé.
+pause [cite: 5]
+goto MENU
 
-## ⚙️ Paramètres d'encodage (HandBrake)
+:PROCESS
+set "S_F=%~1"
+set "S_N=%~nx1"
+set "S_B=%~n1"
+set "S_D=%~dp1"
 
-| Paramètre | Valeur | Description |
-| :--- | :--- | :--- |
-| Codec | HEVC 10-bit (NVENC) | Haute efficacité, profondeur de couleur 10 bits. |
-| Qualité | RF 28 (Slow) | Équilibre optimal entre poids et fidélité visuelle. |
-| Résolution | Max 1920px | Limite le format au Full HD. |
-| Audio | AAC 320kbps | Excellente compatibilité et qualité sonore. |
-| Subtitles | All | Conservation de tous les sous-titres originaux. |
+:: Recalcul du dossier log sans expansion retardée (Solution A)
+set "P_REL=%S_D%"
+call set "P_REL=%%P_REL:%ROOT%=%%"
+set "P_LOG_DIR=%L_ROOT%\%P_REL%"
+set "P_LOG_FILE=%P_LOG_DIR%%S_B%.txt"
 
-## ⚠️ Sécurité des données
+echo --------------------------------------------------------
+echo [TRAVAIL] Fichier : "%S_B%"
+echo [LOG DIR] : "%P_LOG_DIR%"
+set "O_F=%T_DIR%\work_%L_SFX%_temp.mkv" [cite: 7]
+if exist "%O_F%" del /f /q "%O_F%"
 
-Le script utilise une méthode sécurisée pour le remplacement des fichiers :
-1. Encodage vers un dossier temporaire sur `Z:`.
-2. Renommage du fichier source en `.old`.
-3. Déplacement du nouveau fichier vers la destination finale.
-4. Suppression du `.old` uniquement si l'opération a réussi.
+"%HB%" -i "%S_F%" -o "%O_F%" -e nvenc_h265_10bit -q 28 --encoder-preset slow --maxWidth 1920 --loose-anamorphic --modulus 2 --audio-lang-list %LANG% -E aac -B 320 --audio-fallback ac3 --all-subtitles --markers
 
----
-*Développé pour l'optimisation de serveurs multimédias personnels.*
+if not exist "%O_F%" (
+    echo [ERREUR] HandBrake a échoué sur "%S_B%"
+    exit /b
+)
+
+:: RENOMMAGE ET DÉPLACEMENT
+ren "%S_F%" "%S_N%.old" 2>nul
+move /y "%O_F%" "%S_D%%S_B%.mkv" >nul
+
+if %errorlevel% EQU 0 (
+    if exist "%S_D%%S_N%.old" del /f /q "%S_D%%S_N%.old" 2>nul
+    
+    if not exist "%P_LOG_DIR%" mkdir "%P_LOG_DIR%" 2>nul 
+    echo OK > "%P_LOG_FILE%"
+    echo [OK] Témoin créé : "%P_LOG_FILE%"
+) else (
+    if exist "%S_D%%S_N%.old" ren "%S_D%%S_N%.old" "%S_N%"
+    echo [ERREUR] Échec du déplacement final.
+)
+exit /b
