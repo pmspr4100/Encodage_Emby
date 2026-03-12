@@ -1,102 +1,94 @@
-@echo off
-setlocal EnableExtensions DisableDelayedExpansion
-chcp 65001 >nul
+# ============================================================
+#      OPTIMISEUR EMBY 10-BIT V20.5 (Stream's)
+# ============================================================
 
-:MENU
-cls
-echo ============================================
-echo      OPTIMISEUR HANDBRAKE 10-BIT V18.7
-echo ============================================
-echo STATUS : Arborescence Logs Miroir (Z:\Logs)
-echo ============================================
-echo [S, T, U, V, W, X, Y] ou [Q] Quitter
-echo --------------------------------------------
+$ErrorActionPreference = "SilentlyContinue"
+[Console]::OutputEncoding = [System.Text.Encoding]::Default
 
-choice /c STUVWXYQ /n /m "Appuyez sur la lettre du lecteur : "
-set SEL=%errorlevel%
-if %SEL% EQU 8 exit /b
+$TxtSeries  = [System.Text.Encoding]::Default.GetString([byte[]]@(83, 233, 114, 105, 101, 115)) 
+$TxtAnimes  = [System.Text.Encoding]::Default.GetString([byte[]]@(65, 110, 105, 109, 233, 115)) 
+$TxtIgnore  = [System.Text.Encoding]::Default.GetString([byte[]]@(73, 71, 78, 79, 82, 201))     
+$TxtTermine = [System.Text.Encoding]::Default.GetString([byte[]]@(84, 101, 114, 109, 105, 110, 233)) 
 
-:: --- CONFIGURATION ---
-if %SEL% EQU 1 set "L_SFX=S"
-if %SEL% EQU 2 set "L_SFX=T"
-if %SEL% EQU 3 set "L_SFX=U"
-if %SEL% EQU 4 set "L_SFX=V"
-if %SEL% EQU 5 set "L_SFX=W"
-if %SEL% EQU 6 set "L_SFX=X"
-if %SEL% EQU 7 set "L_SFX=Y"
+function Show-Menu {
+    Clear-Host
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "      OPTIMISEUR EMBY 10-BIT V20.5" -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "[S] Cartoons     [T] Mangas      [U] $TxtSeries"
+    Write-Host "[V] Spectacle    [W] Animations  [X] $TxtAnimes"
+    Write-Host "[Y] Films        [Q] Quitter"
+    Write-Host "--------------------------------------------"
+}
 
-set "ROOT=%L_SFX%:\"
-set "T_DIR=Z:\Encoder_Emby"
-set "L_ROOT=Z:\Encoder_Emby\Logs\Logs_%L_SFX%"
-set "HB=C:\Program Files\HandBrake\HandBrakeCLI.exe"
+$HB = Get-Command "HandBrakeCLI.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+if (-not $HB) { $HB = "C:\Program Files\HandBrake\HandBrakeCLI.exe" }
+$T_DIR = "Z:\Encoder_Emby"
+$L_BASE = "Z:\Encoder_Emby\Logs"
 
-:: --- CORRECTION DE LA LOGIQUE DES LANGUES ---
-set "LANG=fra"
-if "%L_SFX%"=="T" set "LANG=jpn,fra"
-if "%L_SFX%"=="W" set "LANG=jpn,fra"
+while ($true) {
+    Show-Menu
+    Write-Host "Appuyez sur une touche (Lecteur) : " -NoNewline
+    $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    $SEL = $key.Character.ToString().ToUpper()
+    Write-Host "$SEL" -ForegroundColor Green
 
-echo [INFO] Analyse de %ROOT%...
+    if ($SEL -eq "Q") { break }
+    if ("STUVWXY" -notlike "*$SEL*") { continue }
 
-:: --- BOUCLE DE SCAN RÉCURSIVE ---
-for /f "delims=" %%F in ('dir "%ROOT%*.mkv" "%ROOT%*.mp4" "%ROOT%*.avi" "%ROOT%*.mov" "%ROOT%*.wmv" "%ROOT%*.m4v" "%ROOT%*.mpeg" /s /b 2^>nul') do (
-    
-    set "F_PATH=%%~dpF"
-    set "F_BASE=%%~nF"
-    
-    setlocal EnableDelayedExpansion
-    set "REL_PATH=!F_PATH:%ROOT%=!"
-    set "LOG_DIR=%L_ROOT%\!REL_PATH!"
-    set "LOG_FILE=!LOG_DIR!!F_BASE!.txt"
-    
-    if exist "!LOG_FILE!" (
-        echo [IGNORE] !F_BASE! [cite: 3]
-        endlocal
-    ) else (
-        endlocal
-        call :PROCESS "%%F"
-    )
-)
-echo [FIN] Scan terminé.
-pause [cite: 5]
-goto MENU
+    $ROOT = "$($SEL):\"
+    $L_ROOT = Join-Path $L_BASE "Logs_$SEL"
+    if (-not (Test-Path $ROOT)) { Write-Host "[!] Lecteur introuvable." -ForegroundColor Red ; Start-Sleep 2 ; continue }
 
-:PROCESS
-set "S_F=%~1"
-set "S_N=%~nx1"
-set "S_B=%~n1"
-set "S_D=%~dp1"
+    # --- LOGIQUE DES LANGUES MISE A JOUR ---
+    # Seuls T et W gardent le Japonais. X est désormais en Français uniquement.
+    $LANG = if ("TW" -like "*$SEL*") { "jpn,fra" } else { "fra" }
 
-:: Recalcul du dossier log sans expansion retardée (Solution A)
-set "P_REL=%S_D%"
-call set "P_REL=%%P_REL:%ROOT%=%%"
-set "P_LOG_DIR=%L_ROOT%\%P_REL%"
-set "P_LOG_FILE=%P_LOG_DIR%%S_B%.txt"
+    Write-Host "--- SCAN EN COURS SUR $ROOT ---" -ForegroundColor Yellow
+    $Extensions = "*.mkv","*.mp4","*.avi","*.flv","*.mov","*.wmv","*.webm","*.m4v","*.mpg","*.mpeg"
+    $files = Get-ChildItem -Path $ROOT -Include $Extensions -Recurse -File
+    
+    $total = $files.Count
+    $current = 0
 
-echo --------------------------------------------------------
-echo [TRAVAIL] Fichier : "%S_B%"
-echo [LOG DIR] : "%P_LOG_DIR%"
-set "O_F=%T_DIR%\work_%L_SFX%_temp.mkv" [cite: 7]
-if exist "%O_F%" del /f /q "%O_F%"
+    foreach ($file in $files) {
+        $current++
+        $logPath = Join-Path $L_ROOT $file.DirectoryName.Replace($ROOT, "")
+        $logFile = Join-Path $logPath "$($file.BaseName).txt"
+        
+        if (Test-Path -LiteralPath $logFile) {
+            Write-Host "[$current/$total] [$TxtIgnore] $($file.Name)" -ForegroundColor Gray
+            continue
+        }
 
-"%HB%" -i "%S_F%" -o "%O_F%" -e nvenc_h265_10bit -q 28 --encoder-preset slow --maxWidth 1920 --loose-anamorphic --modulus 2 --audio-lang-list %LANG% -E aac -B 320 --audio-fallback ac3 --all-subtitles --markers
+        Write-Host "--------------------------------------------------------"
+        Write-Host "[$current/$total] [ACTION] -> $($file.Name)" -ForegroundColor White
+        
+        $TS = Get-Date -Format "HHmmss"
+        $workOut = Join-Path $T_DIR "temp_$($SEL)_$($TS).mkv"
 
-if not exist "%O_F%" (
-    echo [ERREUR] HandBrake a échoué sur "%S_B%"
-    exit /b
-)
+        if (-not (Test-Path $T_DIR)) { New-Item -ItemType Directory -Path $T_DIR }
 
-:: RENOMMAGE ET DÉPLACEMENT
-ren "%S_F%" "%S_N%.old" 2>nul
-move /y "%O_F%" "%S_D%%S_B%.mkv" >nul
+        $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q 28 --encoder-preset fast --maxWidth 1920 --audio-lang-list $LANG -E av_aac -B 192 --all-subtitles --markers"
+        Start-Process -FilePath $HB -ArgumentList $hbArgs -Wait -NoNewWindow
 
-if %errorlevel% EQU 0 (
-    if exist "%S_D%%S_N%.old" del /f /q "%S_D%%S_N%.old" 2>nul
-    
-    if not exist "%P_LOG_DIR%" mkdir "%P_LOG_DIR%" 2>nul 
-    echo OK > "%P_LOG_FILE%"
-    echo [OK] Témoin créé : "%P_LOG_FILE%"
-) else (
-    if exist "%S_D%%S_N%.old" ren "%S_D%%S_N%.old" "%S_N%"
-    echo [ERREUR] Échec du déplacement final.
-)
-exit /b
+        if (Test-Path -LiteralPath $workOut) {
+            if ((Get-Item -LiteralPath $workOut).Length -gt 1MB) {
+                $oldPath = "$($file.FullName).old"
+                Rename-Item -LiteralPath $file.FullName -NewName "$($file.Name).old" -Force
+                $finalPath = Join-Path $file.DirectoryName "$($file.BaseName).mkv"
+                Move-Item -LiteralPath $workOut -Destination $finalPath -Force
+
+                if ($?) {
+                    Remove-Item -LiteralPath $oldPath -Force
+                    if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force }
+                    "OK" | Out-File -LiteralPath $logFile
+                    Write-Host "[OK] $TxtTermine." -ForegroundColor Green
+                }
+            }
+            if (Test-Path -LiteralPath $workOut) { Remove-Item -LiteralPath $workOut -Force }
+        }
+    }
+    Write-Host "`n--- DISQUE $SEL $TxtTermine ---" -ForegroundColor Cyan
+    Start-Sleep 3
+}
