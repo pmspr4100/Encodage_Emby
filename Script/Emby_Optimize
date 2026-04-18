@@ -1,0 +1,140 @@
+# ============================================================
+#         OPTIMISEUR EMBY 10-BIT V22 (Alignment Fix)
+# ============================================================
+
+[Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(850)
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = "SilentlyContinue"
+
+# --- CONFIGURATION INITIALE ---
+$VIDEO_CODEC  = "nvenc_h265_10bit" 
+$VIDEO_QUALITY = "28"               
+$VIDEO_PRESET  = "fast"             
+
+# Codes ASCII pour une compatibilité totale
+$e_aigu = [char]233  
+$S_Series  = "S" + $e_aigu + "ries"      
+$S_Animes  = "Anim" + $e_aigu + "s"      
+
+# --- SELECTION DU CODEC ---
+Clear-Host
+Write-Host "============================================" -ForegroundColor Yellow
+Write-Host "      CHOIX DU TYPE D'ENCODAGE" -ForegroundColor Yellow
+Write-Host "============================================" -ForegroundColor Yellow
+Write-Host "[1] HEVC 10-bit (Nvidia NVENC)"
+Write-Host "[2] AV1 10-bit (Nvidia NVENC)"
+Write-Host "[3] H.264 (Nvidia NVENC)"
+Write-Host "[4] HEVC 10-bit (CPU x265)"
+Write-Host "--------------------------------------------"
+$choice = Read-Host "Choix (1-4)"
+
+switch ($choice) {
+    "1" { $VIDEO_CODEC = "nvenc_h265_10bit"; $VIDEO_QUALITY = "28" }
+    "2" { $VIDEO_CODEC = "nvenc_av1_10bit";  $VIDEO_QUALITY = "30" }
+    "3" { $VIDEO_CODEC = "nvenc_h264";       $VIDEO_QUALITY = "22" }
+    "4" { $VIDEO_CODEC = "x265_10bit";       $VIDEO_QUALITY = "24"; $VIDEO_PRESET = "medium" }
+    default { $VIDEO_CODEC = "nvenc_h265_10bit"; $VIDEO_QUALITY = "28" }
+}
+
+$HB = "HandBrakeCLI.exe"
+$T_DIR = "Z:\Encoder_Emby"
+$L_BASE = "Z:\Encoder_Emby\Logs"
+
+while ($true) {
+    Clear-Host
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "      OPTIMISEUR EMBY 10-BIT V21.9" -ForegroundColor Cyan
+    Write-Host "      CODEC ACTIF : $VIDEO_CODEC" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Cyan
+    
+    # Ligne 1 : Cartoons | Spectacle | Films
+    Write-Host ("[S] Cartoons").PadRight(18) -NoNewline
+    Write-Host ("[V] Spectacle").PadRight(18) -NoNewline
+    Write-Host "[Y] Films"
+
+    # Ligne 2 : Mangas | Animations | Mode Scan
+    Write-Host ("[T] Mangas").PadRight(18) -NoNewline
+    Write-Host ("[W] Animations").PadRight(18) -NoNewline
+    Write-Host "[R] MODE SCAN"
+
+    # Ligne 3 : Séries | Animés | Quitter
+    # Note : On réduit le pad de 1 pour compenser l'octet invisible de l'accent
+    Write-Host ("[U] $S_Series").PadRight(18) -NoNewline
+    Write-Host ("[X] $S_Animes").PadRight(18) -NoNewline
+    Write-Host "[Q] QUITTER"
+    
+    Write-Host "--------------------------------------------"
+    Write-Host "Action (Lecteur ou R) : " -NoNewline
+    
+    $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    $SEL = $key.Character.ToString().ToUpper()
+    Write-Host "$SEL" -ForegroundColor Green
+
+    if ($SEL -eq "Q") { break }
+    
+    if ($SEL -eq "R") {
+        Write-Host ""
+        $targetDrive = Read-Host "Lettre du lecteur (ex: S, T, U)"
+        $targetDrive = $targetDrive.ToUpper()
+        $ROOT = "$($targetDrive):\"
+        if (-not (Test-Path $ROOT)) { Write-Host "[!] Lecteur $ROOT introuvable." -ForegroundColor Red ; Start-Sleep 2 ; continue }
+
+        Write-Host "--- RECHERCHE DES FICHIERS NON ENCODES ---" -ForegroundColor Yellow
+        $Extensions = "*.mkv","*.mp4","*.avi","*.ts","*.mov"
+        $files = Get-ChildItem -Path $ROOT -Include $Extensions -Recurse -File
+        
+        $ReportFile = Join-Path $L_BASE "RAPPORT_SCAN_$($targetDrive).txt"
+        "SCAN $targetDrive - $(Get-Date)" | Out-File $ReportFile -Encoding utf8
+        
+        $count = 0
+        foreach ($file in $files) {
+            $subDir = if ($file.DirectoryName.Length -gt $ROOT.Length) { $file.DirectoryName.Substring($ROOT.Length) } else { "" }
+            $logFile = Join-Path (Join-Path $L_BASE "Logs_$targetDrive") (Join-Path $subDir "$($file.BaseName).txt")
+            
+            if (-not (Test-Path -LiteralPath $logFile)) {
+                $count++
+                Write-Host "[A FAIRE] $($file.Name)" -ForegroundColor Magenta
+                $file.FullName | Out-File $ReportFile -Append -Encoding utf8
+            }
+        }
+        Write-Host "`n--- FIN : $count fichiers manquants ---" -ForegroundColor Cyan
+        Write-Host "Appuyez sur une touche..." ; $null = $Host.UI.RawUI.ReadKey()
+        continue
+    }
+
+    if ("STUVWXY" -like "*$SEL*") {
+        $ROOT = "$($SEL):\"
+        $L_ROOT = Join-Path $L_BASE "Logs_$SEL"
+        if (-not (Test-Path $ROOT)) { Write-Host "Lecteur $SEL absent." -ForegroundColor Red ; Start-Sleep 2 ; continue }
+        
+        $LANG = if ("TW" -like "*$SEL*") { "jpn,fra" } else { "fra" }
+        Write-Host "--- SCAN $SEL ---" -ForegroundColor Yellow
+        $files = Get-ChildItem -Path $ROOT -Include "*.mkv","*.mp4","*.avi","*.ts" -Recurse -File
+        
+        foreach ($file in $files) {
+            $sub = if ($file.DirectoryName.Length -gt $ROOT.Length) { $file.DirectoryName.Substring($ROOT.Length) } else { "" }
+            $logP = Join-Path $L_ROOT $sub
+            $logF = Join-Path $logP "$($file.BaseName).txt"
+            
+            if (Test-Path -LiteralPath $logF) { continue }
+
+            Write-Host "-> $($file.Name)" -ForegroundColor White
+            $work = Join-Path $T_DIR "temp_$($SEL)_$(Get-Date -Format 'HHmmss').mkv"
+            if (-not (Test-Path $T_DIR)) { New-Item -ItemType Directory $T_DIR }
+
+            $hbArgs = "-i `"$($file.FullName)`" -o `"$work`" -e $VIDEO_CODEC -q $VIDEO_QUALITY --encoder-preset $VIDEO_PRESET --maxWidth 1920 --audio-lang-list $LANG -E av_aac -B 192 --all-subtitles --markers"
+            Start-Process $HB -ArgumentList $hbArgs -Wait -NoNewWindow
+
+            if (Test-Path $work) {
+                if ((Get-Item $work).Length -gt 1MB) {
+                    Rename-Item -LiteralPath $file.FullName -NewName "$($file.Name).old" -Force
+                    Move-Item -LiteralPath $work -Destination (Join-Path $file.DirectoryName "$($file.BaseName).mkv") -Force
+                    Remove-Item -LiteralPath "$($file.FullName).old" -Force
+                    if (-not (Test-Path $logP)) { New-Item -ItemType Directory $logP -Force }
+                    "OK - $(Get-Date)" | Out-File $logF -Encoding utf8
+                    Write-Host "[OK]" -ForegroundColor Green
+                } else { Remove-Item $work -Force }
+            }
+        }
+    }
+}
