@@ -1,50 +1,54 @@
-## 🚀 Emby Optimizer 10-Bit
-- Emby Optimizer est un outil de maintenance automatisé conçu pour uniformiser et optimiser votre bibliothèque multimédia. Il convertit massivement vos fichiers vers le format HEVC 10-bit, garantissant un gain  d'espace disque considérable tout en assurant une lecture fluide (Direct Play) sur Emby.
+**🎬 Emby Library Optimizer (HEVC 10-bit)
+Un outil "Portable" (sans installation) conçu pour automatiser l'optimisation de votre bibliothèque Emby. Ce script PowerShell convertit vos vidéos en HEVC 10-bit tout en préservant l'intégralité de vos pistes audio et sous-titres, garantissant un gain d'espace massif et une compatibilité maximale.
 
-## ✨ Quoi de neuf ?
+**📁 Structure du Projet
+Pour que le script fonctionne correctement, respectez l'architecture suivante (conçue pour être isolée et propre) :
 
-- Multi-Instance : Code réécrit pour permettre plusieurs lancements simultanés. Chaque instance utilise un nom de fichier temporaire unique (temp_Lecteur_Heure.mkv), évitant tout conflit de ressources.
-- Scan de Progression Temps Réel : Affichage dynamique du scan avec compteur [X/Total]. Les fichiers déjà traités sont marqués [IGNORÉ] en gris pour une meilleure lisibilité.
-- Auto-Détection des Dépendances : Le script recherche désormais automatiquement HandBrake et FFmpeg dans le PATH système Windows.
-- Correction Unicode "Blindée" : Reconstruction des caractères par octets pour un affichage parfait des accents (Séries, Animés), peu importe la configuration de votre console PowerShell.
-- Priorité Audio Étendue : Support automatique du Japonais étendu aux lecteurs
+├── ENCODAGE.ps1          # Le cerveau de l'outil (Script PowerShell)
+├── Temp_Source/          # Déposez ici vos fichiers originaux à traiter
+├── Fichier Final/        # Vos vidéos optimisées apparaîtront ici
+├── Tools/                # Doit contenir HandBrakeCLI.exe et ffprobe.exe et ffmpeg.exe
+└── Logs_Audit/           # Rapports de scan et historique d'encodage
 
-## ⚙️ Installation et Configuration
+**🚀 Points forts de cette version
+💎 Conservation Totale : Le script détecte et conserve toutes les pistes audio et tous les sous-titres sans exception.
 
-- Assurez-vous que les outils suivants sont installés et ajoutés à votre PATH Windows :
-- HandBrake CLI (Essentiel pour la gestion des pistes audio/sous-titres).
-- FFmpeg (Moteur de secours).
+🎧 Optimisation Audio : Conversion automatique de chaque piste en AAC (192 kbps). Cela garantit le "Direct Play" sur 99% des clients Emby (Web, Smart TV, Mobile) et réduit la charge CPU du serveur.
 
-## Paramétrage du Script
+🛡️ Sécurité : Vos fichiers originaux dans Temp_Source ne sont jamais supprimés. Le script travaille uniquement par copie vers le dossier final.
 
-- Ouvrez le fichier .ps1 et ajustez les variables suivantes selon votre installation :
-- $T_DIR : Dossier de travail temporaire (ex: Z:\Encoder_Emby).
-- $L_BASE : Dossier de stockage des logs de succès.
+🧠 Intelligence de scan : Un système de logs intégré évite de ré-encoder inutilement un fichier déjà traité lors des sessions précédentes.
 
-## 📖 Utilisation
+**🛠️ Pourquoi ces réglages pour Emby ?
+HEVC 10-bit (x265) : Le standard actuel. Le 10-bit élimine les effets de "banding" (artefacts dans les dégradés de couleurs) fréquents en 8-bit, tout en offrant une compression supérieure.
 
-- Lancez le script en mode Administrateur (si nécessaire pour l'accès aux lecteurs).
-- Choisissez la lettre du lecteur à traiter via le menu interactif.
-- Le script scanne récursivement tous les sous-dossiers.
-- Une fois terminé, le fichier original est remplacé par la version optimisée et un témoin `.txt` est créé dans `Z:\Encoder_Emby\Logs\`.
+Universal AAC Audio : En passant les pistes en AAC, on élimine le besoin de transcodage audio côté serveur, économisant les ressources de votre machine.
 
-## ⚙️ Paramètres d'encodage (HandBrake)
+Performance : Un fichier plus léger signifie un streaming à distance (Upload) fluide et sans buffering.
 
-| Paramètre | Valeur | Description |
-| :--- | :--- | :--- |
-| Codec | HEVC 10-bit (GPU) | Haute efficacité, profondeur de couleur 10 bits. |
-| Codec | HEVC 10-bit (CPU) | Haute efficacité, profondeur de couleur 10 bits. |
-| Qualité | RF 28 (Slow) | Équilibre optimal entre poids et fidélité visuelle. |
-| Résolution | Max 1920px | Limite le format au Full HD. |
-| Audio | AAC 320kbps | Excellente compatibilité et qualité sonore. |
+**📖 Mode d'emploi
+Placez vos fichiers (ou dossiers/sous-dossiers) dans le dossier Temp_Source.
 
-## ⚠️ Sécurité des données
+Faites un clic droit sur ENCODAGE.ps1 > Exécuter avec PowerShell.
 
-- Le script utilise une méthode sécurisée pour le remplacement des fichiers :
-- Encodage vers un dossier temporaire sur `Z:`.
-- Renommage du fichier source en `.old`.
-- Déplacement du nouveau fichier vers la destination finale.
-- Suppression du `.old` uniquement si l'opération a réussi.
+Utilisez le Menu interactif :
+
+[A] Audit : Scanne la source pour lister les fichiers qui ne sont pas encore en HEVC 10-bit.
+
+[G] GPU (NVIDIA) : Utilise NVENC pour un encodage ultra-rapide via votre carte graphique.
+
+[C] CPU (x265) : Utilise le processeur pour une qualité optimale (vitesse plus lente).
+
+**⚙️ Détails Techniques (Sous le capot)
+Le script pilote deux outils majeurs via la console :
+
+Le Scan (ffprobe) : Analyse les métadonnées de chaque vidéo pour identifier le codec et la profondeur de bits. Si le fichier est déjà conforme, il est ignoré.
+
+L'Encodage (HandBrakeCLI) : Utilise la commande --audio all couplée à -E av_aac. Cela force l'extraction de chaque piste audio, quelle que soit la langue, et sa conversion en AAC 192k.
+
+Le Tracking : À chaque succès, une entrée est créée dans Logs_Audit. Le script compare systématiquement vos fichiers à cette liste avant de lancer un nouvel encodage.
+
+Note : Assurez-vous d'avoir téléchargé les exécutables de HandBrakeCLI et ffprobe et de les avoir placés dans le dossier Tools avant de lancer le script.
 
 ---
 *Développé pour l'optimisation de serveurs multimédias personnels.*
