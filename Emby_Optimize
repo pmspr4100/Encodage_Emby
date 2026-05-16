@@ -67,7 +67,7 @@ function Start-Encoding {
     }
 
     Write-Host "`n--- LANCEMENT ENCODAGE $modeName ---" -ForegroundColor Green
-    $files = Get-ChildItem -Path $SOURCE_DIR -Include "*.mkv","*.mp4","*.avi","*.ts" -Recurse -File
+    $files = Get-ChildItem -Path $SOURCE_DIR -Include "*.mp4","*.mkv","*.webm","*.mov","*.qt","*.m4v","*.wmv","*.avi","*.asf","*.wm","*.wmx","*.asx","*.ts","*.mts","*.m2ts","*.m2t","*.mxf","*.avchd","*.mpg","*.mpeg","*.m1v","*.m2v","*.mp2","*.mpa","*.mpe","*.vob","*.ifo","*.flv","*.f4v","*.f4p","*.f4a","*.f4b","*.swf","*.3gp","*.3g2","*.3gpp","*.3gp2","*.svi","*.amv","*.ogv","*.ogg","*.ogm","*.rm","*.rmvb","*.rv","*.divx","*.xvid","*.dat","*.vcd","*.nsv","*.roq","*.ivf","*.drc","*.mng" -Recurse -File
     
     foreach ($file in $files) {
         $logDir = Join-Path $L_BASE "Encodage_Logs"
@@ -111,7 +111,7 @@ function Start-Encoding {
 while ($true) {
     Clear-Host
     Write-Host "============================================" -ForegroundColor Cyan
-    Write-Host "      EMBY OPTIMIZER V22 (PORTABLE)"          -ForegroundColor Cyan
+    Write-Host "      EMBY OPTIMIZER V22.2 (PORTABLE)"          -ForegroundColor Cyan
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host " Dossier Root : $BASE_DIR"                   -ForegroundColor Gray
     Write-Host " Source       : $SOURCE_DIR"                  -ForegroundColor Gray
