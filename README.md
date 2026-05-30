@@ -4,7 +4,7 @@ Une solution robuste en PowerShell conçue pour auditer, encoder et standardiser
 
 Le script orchestre intelligemment **HandBrakeCLI**, **FFmpeg** et **MKVToolNix** pour garantir une compatibilité maximale en DirectPlay tout en optimisant massivement l'espace de stockage de votre NAS.
 
-## 🚀 Évolution majeure (V22.2 ➡️ V31)
+## 🚀 Évolution majeure (V31)
 Contrairement à la version V22 qui fonctionnait en mode local/portable sur un seul répertoire de travail, la **V31** passe à l'échelle industrielle :
 * **Multi-disques Réseau :** Scan et traite directement vos différents volumes de stockage par catégorie de média.
 * **Modification In-Place (Instantane) :** Plus besoin de réencoder la vidéo si seuls les drapeaux audio/sous-titres sont incorrects. `mkvpropedit` modifie les en-têtes en moins d'une seconde.
