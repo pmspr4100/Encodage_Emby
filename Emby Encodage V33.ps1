@@ -1,5 +1,5 @@
 # ============================================================
-#          OPTIMISEUR & AUDITEUR EMBY 10-BIT V31
+#          OPTIMISEUR & AUDITEUR EMBY 10-BIT V33
 # ============================================================
 
 $ErrorActionPreference = "Continue"
@@ -8,7 +8,7 @@ $ErrorActionPreference = "Continue"
 # --- INITIALISATION DES TEXTES ---
 $TxtSeries   = "Series"
 $TxtAnimes   = "Animes"
-$TxtIgnore   = "IGNORE"     
+$TxtHEVC     = "HEVC"     
 $TxtTerminer = "Termine"
 $TxtMAJ      = "Mise a jour"
 $TxtMajMkv   = "MAJ MKVToolNix"
@@ -44,12 +44,12 @@ function Update-HandBrake {
     Write-Host "============================================" -ForegroundColor Yellow
     try {
         Write-Host "[+] Recherche de la derniere version..." -NoNewline
-        $hbRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/HandBrake/HandBrake/releases/latest" -TimeoutSec 10
+        $hbRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/HandBrake/HandBrake/releases/latest" -TimeoutSec 10 -UseBasicParsing
         $hbUrl = $hbRelease.assets | Where-Object { $_.name -like "*HandBrakeCLI*-x86_64-Win_64.zip" } | Select-Object -ExpandProperty browser_download_url -First 1
         if ($hbUrl) {
             Write-Host " OK`n[+] Telechargement..." -ForegroundColor Cyan
             $tmp = Join-Path $env:TEMP "hb.zip"
-            Invoke-WebRequest -Uri $hbUrl -OutFile $tmp
+            Invoke-WebRequest -Uri $hbUrl -OutFile $tmp -UseBasicParsing
             Write-Host "[+] Extraction vers $HB_DIR..." -ForegroundColor Cyan
             Expand-Archive -Path $tmp -DestinationPath $HB_DIR -Force
             Remove-Item $tmp -Force
@@ -76,7 +76,7 @@ function Update-FFmpeg {
         
         if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }
         
-        Invoke-WebRequest -Uri $ffUrl -OutFile $tmp
+        Invoke-WebRequest -Uri $ffUrl -OutFile $tmp -UseBasicParsing
         Write-Host "[+] Extraction..." -ForegroundColor Cyan
         Expand-Archive -Path $tmp -DestinationPath $ext -Force
         
@@ -114,9 +114,7 @@ function Update-MKVToolNix {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
         Write-Host "[+] Interrogation de la derniere version via Codeberg API..." -ForegroundColor Cyan
-        
-        # Appel à l'API publique de Codeberg pour lister les tags de version
-        $codebergTags = Invoke-RestMethod -Uri "https://codeberg.org/api/v1/repos/mbunkus/mkvtoolnix/tags" -TimeoutSec 12
+        $codebergTags = Invoke-RestMethod -Uri "https://codeberg.org/api/v1/repos/mbunkus/mkvtoolnix/tags" -TimeoutSec 12 -UseBasicParsing
         
         if ($codebergTags -and $codebergTags.name) {
             # Extraction chirurgicale : on ne garde QUE le numéro (ex: "release-99.0" ou "v99.0" devient "99.0")
@@ -137,7 +135,7 @@ function Update-MKVToolNix {
         $tmp = Join-Path $env:TEMP "mkvtoolnix.7z"
 
         Write-Host "[+] Telechargement du pack portable (.7z)..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $mkvUrl -OutFile $tmp -TimeoutSec 60
+        Invoke-WebRequest -Uri $mkvUrl -OutFile $tmp -TimeoutSec 60 -UseBasicParsing
         
         Write-Host "[+] Extraction vers $MKV_DIR..." -ForegroundColor Cyan
         if (-not (Test-Path $MKV_DIR)) { New-Item $MKV_DIR -ItemType Directory -Force | Out-Null }
@@ -189,7 +187,10 @@ function Start-Audit {
         $TimeStamp = Get-Date -Format "yyyyMMdd_HHmm"
         $CurrentReport = Join-Path $AuditLogDir "Audit_Lecteur_$($drv)_$($TimeStamp).txt"
         Write-Host "`n`n--- SCAN AUDIT EN COURS SUR $A_ROOT ---" -ForegroundColor Yellow
-        $aFiles = Get-ChildItem -Path $A_ROOT -Include "*.mp4","*.mkv","*.webm","*.mov","*.qt","*.m4v","*.wmv","*.avi","*.asf","*.wm","*.wmx","*.asx","*.ts","*.mts","*.m2ts","*.m2t","*.mxf","*.avchd","*.mpg","*.mpeg","*.m1v","*.m2v","*.mp2","*.mpa","*.mpe","*.vob","*.ifo","*.flv","*.f4v","*.f4p","*.f4a","*.f4b","*.swf","*.3gp","*.3g2","*.3gpp","*.3gp2","*.svi","*.amv","*.ogv","*.ogg","*.ogm","*.rm","*.rmvb","*.rv","*.divx","*.xvid","*.dat","*.vcd","*.nsv","*.roq","*.ivf","*.drc","*.mng" -Recurse -File
+        
+        $AllowedExts = @(".mp4",".mkv",".webm",".mov",".qt",".m4v",".wmv",".avi",".ts",".m2ts",".mpg",".mpeg",".vob",".flv",".ogv",".divx",".xvid")
+        $aFiles = Get-ChildItem -Path $A_ROOT -Recurse -File | Where-Object { $AllowedExts -contains $_.Extension.ToLower() }
+        
         $count = 0
         foreach ($f in $aFiles) {
             $probe = & $FP -v error -select_streams v:0 -show_entries stream=codec_name,pix_fmt -of csv=p=0:s="|" "$($f.FullName)"
@@ -205,9 +206,6 @@ function Start-Audit {
     Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 3
 }
 
-# ============================================================
-# SOUS-MENU DE TRAITEMENT AUDIO
-# ============================================================
 function Start-AudioMenu {
     Clear-Host
     Write-Host "============================================" -ForegroundColor DarkYellow
@@ -252,9 +250,9 @@ function Invoke-Processing {
     if (-not (Test-Path $ROOT)) { Write-Host "[!] Lecteur $ROOT introuvable." -ForegroundColor Red ; Start-Sleep 2 ; return }
 
     Write-Host "`n--- SCAN EN COURS SUR $ROOT ---" -ForegroundColor Yellow
-    $Extensions = if ($isAudioOnly) { "*.mkv" } else { "*.mp4","*.mkv","*.webm","*.mov","*.qt","*.m4v","*.wmv","*.avi","*.ts","*.m2ts","*.mpg","*.mpeg","*.vob","*.flv" }
+    $Extensions = if ($isAudioOnly) { @(".mkv") } else { @(".mp4",".mkv",".webm",".mov",".qt",".m4v",".wmv",".avi",".ts",".m2ts",".mpg",".mpeg",".vob",".flv") }
     
-    $files = Get-ChildItem -Path $ROOT -Include $Extensions -Recurse -File
+    $files = Get-ChildItem -Path $ROOT -Recurse -File | Where-Object { $Extensions -contains $_.Extension.ToLower() }
     $total = $files.Count
     $current = 0
 
@@ -266,24 +264,29 @@ function Invoke-Processing {
         $logFile = Join-Path $logPath "$($file.BaseName).txt"
         
         if (Test-Path -LiteralPath $logFile) {
-            Write-Host "[$current/$total] [$TxtIgnore] $($file.Name)" -ForegroundColor Gray
+            Write-Host "[$current/$total] [$TxtHEVC] $($file.Name)" -ForegroundColor Gray
             continue
         }
 
         $codec = "Inconnu"
+        $width = 1920
         if (Test-Path $FP) {
             try {
-                $codec = & $FP -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 -read_intervals "%10" "$($file.FullName)" 2>&1
-                if ($LASTEXITCODE -ne 0 -or $codec -match "error") { $codec = "Inconnu" }
+                $probeData = & $FP -v error -select_streams v:0 -show_entries stream=codec_name,width -of default=noprint_wrappers=1:nokey=0 "$($file.FullName)" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $codec = ($probeData | Where-Object { $_ -match "codec_name" }) -replace "codec_name=",""
+                    $widthStr = ($probeData | Where-Object { $_ -match "width" }) -replace "width=",""
+                    if ($widthStr) { $width = [int]$widthStr }
+                }
             } catch { $codec = "Inconnu" }
         }
 
         Write-Host "--------------------------------------------------------"
-        Write-Host "[$current/$total] SOURCE : [$($codec.ToUpper())]" -ForegroundColor Magenta
+        Write-Host "[$current/$total] SOURCE : [$($codec.ToUpper())] | Largeur : $($width)p" -ForegroundColor Magenta
         Write-Host "[ENCOURS] -> $($file.Name)" -ForegroundColor White
         
         if ($isAudioOnly) {
-            # --- MODIFICATION IN-PLACE VIA MKVPROPEDIT (LOGIQUE CORRIGÉE V31) ---
+            # --- MODIFICATION IN-PLACE VIA MKVPROPEDIT (LOGIQUE CORRIGÉE V33) ---
             try {
                 $audioTracks = & $FP -v error -select_streams a -show_entries stream=index:stream_tags=language -of csv=p=0 "$($file.FullName)"
                 $subTracks = & $FP -v error -select_streams s -show_entries stream=index:stream_tags=id,language:stream_tags=title -of csv=p=0 "$($file.FullName)"
@@ -298,7 +301,6 @@ function Invoke-Processing {
                     foreach ($track in ($audioTracks -split "`n")) {
                         if ([string]::IsNullOrWhiteSpace($track)) { continue }
                         $lang = $track.Split(',')[1]
-                        
                         if (($lang -eq "jpn" -or $lang -eq "ja") -and -not $foundJpn) {
                             $propArgs += @("--edit", "track:a$aIdx", "--set", "flag-default=1")
                             $foundJpn = $true
@@ -313,7 +315,6 @@ function Invoke-Processing {
                     $foundSub = $false
                     foreach ($sub in ($subTracks -split "`n")) {
                         if ([string]::IsNullOrWhiteSpace($sub)) { continue }
-                        
                         if ($sub -match "fra|fr" -and $sub -notmatch "forced") {
                             if (-not $foundSub) {
                                 $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=1", "--edit", "track:s$sIdx", "--set", "flag-forced=0")
@@ -334,7 +335,6 @@ function Invoke-Processing {
                     foreach ($track in ($audioTracks -split "`n")) {
                         if ([string]::IsNullOrWhiteSpace($track)) { continue }
                         $lang = $track.Split(',')[1]
-                        
                         if (($lang -eq "fra" -or $lang -eq "fr") -and -not $foundFraAudio) {
                             $propArgs += @("--edit", "track:a$aIdx", "--set", "flag-default=1")
                             $foundFraAudio = $true
@@ -349,7 +349,6 @@ function Invoke-Processing {
                     $foundFraForced = $false
                     foreach ($sub in ($subTracks -split "`n")) {
                         if ([string]::IsNullOrWhiteSpace($sub)) { continue }
-                        
                         if ($sub -match "fra|fr" -and $sub -match "Forced") {
                             if (-not $foundFraForced) {
                                 $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=1", "--edit", "track:s$sIdx", "--set", "flag-forced=1")
@@ -371,27 +370,36 @@ function Invoke-Processing {
                 "OK (In-Place Property Optimization via mkvpropedit)" | Out-File -LiteralPath $logFile -Force
                 
                 Write-Host "============================================" -ForegroundColor Green
-                Write-Host "[OK] $TxtTerminer : Drapeaux corriges et appliques." -ForegroundColor Green
+                Write-Host "[OK] $TxtTerminer : Drapeaux corriges." -ForegroundColor Green
                 Write-Host "============================================" -ForegroundColor Green
             } catch {
                 Write-Host "[!] ERREUR : Edition des en-tetes impossible." -ForegroundColor Red
                 "ERREUR EN-TETE | $($file.FullName) | $($_.Exception.Message)" | Out-File -LiteralPath $ErrorLogFile -Append
             }
         } else {
-            # --- ENCODAGE COMPLET VIA HANDBRAKE (Reste inchangé) ---
+            # --- ENCODAGE VIDEO COMPLET (CRF 28 TOUJOURS FIXE) ---
             $TS = Get-Date -Format "HHmmss"
             $isBackdrop = ($file.DirectoryName -like "*\backdrops*")
             $outExt = "mkv"
             $workOut = Join-Path $T_DIR "temp_$($TargetDrive)_$TS.$outExt"
             if (-not (Test-Path $T_DIR)) { [void](New-Item -ItemType Directory -Path $T_DIR) }
 
+            $Quality = 28
+            $ResParam = "--maxWidth 1920"
+
+            # Si le fichier depasse 1920px (4K), on enleve la limite de largeur mais on maintient -q 28
+            if ($width -gt 1920) {
+                $ResParam = "" 
+                Write-Host "[!] Source 4K detectee : Conservation de la resolution d'origine (Qualite fixe CQ 28)." -ForegroundColor Cyan
+            }
+
             if ($isBackdrop) {
-                $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q 28 --encoder-preset fast --maxWidth 1920"
+                $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam"
             } else {
                 if ("TW" -like "*$TargetDrive*") {
-                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q 28 --encoder-preset fast --maxWidth 1920 --audio-lang-list jpn -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced 0 --native-language fra --all-subtitles --chapters 1-999 --markers"
+                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam --audio-lang-list jpn -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced 0 --native-language fra --all-subtitles --chapters 1-999 --markers"
                 } else {
-                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q 28 --encoder-preset fast --maxWidth 1920 --audio-lang-list fra -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced --subtitle-default 1 --native-language fra --chapters 1-999 --markers"
+                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam --audio-lang-list fra -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced --subtitle-default 1 --native-language fra --chapters 1-999 --markers"
                 }
             }
             
@@ -439,12 +447,12 @@ function Invoke-Processing {
                         "OK (Full Encode - Source:$codec)" | Out-File -LiteralPath $logFile -Force
                         
                         Write-Host "============================================" -ForegroundColor Green
-                        Write-Host "[OK] $TxtTerminer : Encodage et log d'evitement OK." -ForegroundColor Green
+                        Write-Host "[OK] $TxtTerminer : Traitement effectue." -ForegroundColor Green
                         Write-Host "============================================" -ForegroundColor Green
                     }
                     catch {
                         Write-Host "============================================" -ForegroundColor Red
-                        Write-Host "[!] ERREUR : Remplacement impossible." -ForegroundColor Red
+                        Write-Host "[!] ERREUR : Remplacement du fichier." -ForegroundColor Red
                         Write-Host "============================================" -ForegroundColor Red
                         "ERREUR CRITIQUE | $($file.FullName) | $($_.Exception.Message)" | Out-File -LiteralPath $ErrorLogFile -Append
                         if (Test-Path -LiteralPath $workOut) { Remove-Item -LiteralPath $workOut -Force -ErrorAction SilentlyContinue }
@@ -452,6 +460,7 @@ function Invoke-Processing {
                 }
             }
         }
+        [System.GC]::Collect()
     }
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host "`n--- DISQUE $TargetDrive $TxtTerminer ---" -ForegroundColor Cyan
@@ -465,24 +474,24 @@ function Invoke-Processing {
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "         ENCODAGE HEVC 10-BIT V31"      -ForegroundColor Cyan
+    Write-Host "         ENCODAGE HEVC 10-BIT V33"    -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
     Write-Host "[V] Spectacle                  "
     Write-Host "================================================"
-    Write-Host "         Audio FR & VOSTFR"               -ForegroundColor DarkYellow
-    Write-Host "[M] ENTRER DANS LE MENU AUDIO"                -ForegroundColor DarkYellow
+    Write-Host "         Audio FR & VOSTFR"                     -ForegroundColor DarkYellow
+    Write-Host "[M] ENTRER DANS LE MENU AUDIO"                  -ForegroundColor DarkYellow
     Write-Host "================================================"
     Write-Host "         AUDITEUR EMBY 10-BIT"                  -ForegroundColor Magenta
-    Write-Host "[A] AUDITER UNE BIBLIOTHEQUE"                 -ForegroundColor Magenta
+    Write-Host "[A] AUDITER UNE BIBLIOTHEQUE"                   -ForegroundColor Magenta
     Write-Host "================================================"
     Write-Host "         MISES A JOUR OUTILS"                    -ForegroundColor Yellow
-    Write-Host "[H] MAJ HandBrake    [F] MAJ FFmpeg"          -ForegroundColor Yellow
-    Write-Host "[K] $TxtMajMkv"                               -ForegroundColor Yellow
+    Write-Host "[H] MAJ HandBrake    [F] MAJ FFmpeg"            -ForegroundColor Yellow
+    Write-Host "[K] $TxtMajMkv"                                 -ForegroundColor Yellow
     Write-Host "================================================"
-    Write-Host "         Quitter Emby Optimizer"                    -ForegroundColor Red
-    Write-Host "[Q] Quitter"                                  -ForegroundColor Red
+    Write-Host "         Quitter Emby Optimizer"                -ForegroundColor Red
+    Write-Host "[Q] Quitter"                                    -ForegroundColor Red
     Write-Host "================================================"
 } 
 
@@ -501,5 +510,11 @@ while ($true) {
     if ($SEL -eq "M") { Start-AudioMenu ; continue }
 
     if ("STUVWXY" -notlike "*$SEL*") { continue }
+    
+    Write-Host "`n[>>>] DEBUT DE L'ENCODAGE VIDEO SUR LE LECTEUR $SEL..." -ForegroundColor Cyan
     Invoke-Processing -TargetDrive $SEL -isAudioOnly $false
+    
+    Write-Host "`n[>>>] ENCODAGE TERMINE. ENCHAINEMENT SUR L'OPTIMISATION DES FLAGS IN-PLACE SUR $SEL..." -ForegroundColor DarkYellow
+    Start-Sleep -Seconds 2
+    Invoke-Processing -TargetDrive $SEL -isAudioOnly $true
 }
