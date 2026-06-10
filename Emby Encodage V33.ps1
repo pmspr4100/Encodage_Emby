@@ -117,7 +117,6 @@ function Update-MKVToolNix {
         $codebergTags = Invoke-RestMethod -Uri "https://codeberg.org/api/v1/repos/mbunkus/mkvtoolnix/tags" -TimeoutSec 12 -UseBasicParsing
         
         if ($codebergTags -and $codebergTags.name) {
-            # Extraction chirurgicale : on ne garde QUE le numéro (ex: "release-99.0" ou "v99.0" devient "99.0")
             if ($codebergTags[0].name -match '(\d+\.\d+(?:\.\d+)?)') {
                 $latestVersion = $Matches[1]
             } else {
@@ -129,7 +128,6 @@ function Update-MKVToolNix {
 
         Write-Host "[+] Derniere version stable detectee : v$latestVersion" -ForegroundColor Green
 
-        # Construction de l'URL directe vers l'archive officielle .7z
         $baseUrl = "https://mkvtoolnix.download/windows/releases/"
         $mkvUrl = "${baseUrl}${latestVersion}/mkvtoolnix-64-bit-${latestVersion}.7z"
         $tmp = Join-Path $env:TEMP "mkvtoolnix.7z"
@@ -140,13 +138,10 @@ function Update-MKVToolNix {
         Write-Host "[+] Extraction vers $MKV_DIR..." -ForegroundColor Cyan
         if (-not (Test-Path $MKV_DIR)) { New-Item $MKV_DIR -ItemType Directory -Force | Out-Null }
         
-        # Nettoyage des anciens binaires pour éviter les verrous
         Get-ChildItem -Path $MKV_DIR -File | Remove-Item -Force -ErrorAction SilentlyContinue
 
-        # Extraction transparente via l'outil natif Windows (tar.exe)
         tar.exe -xf $tmp -C $MKV_DIR
         
-        # Redressement si l'archive encapsule ses fichiers dans une arborescence "mkvtoolnix/"
         $subDir = Join-Path $MKV_DIR "mkvtoolnix"
         if (Test-Path $subDir) {
             Get-ChildItem -Path $subDir | Move-Item -Destination $MKV_DIR -Force
@@ -204,26 +199,6 @@ function Start-Audit {
         if ($count -gt 0) { Start-Process notepad.exe $CurrentReport }
     }
     Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 3
-}
-
-function Start-AudioMenu {
-    Clear-Host
-    Write-Host "============================================" -ForegroundColor DarkYellow
-    Write-Host "     TRAITEMENT AUDIO : CHOIX DU DOSSIER"     -ForegroundColor DarkYellow
-    Write-Host "============================================" -ForegroundColor DarkYellow
-    Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas" 
-    Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     " 
-    Write-Host "[V] Spectacle  [Q] Quitter             " 
-    Write-Host "============================================"
-    Write-Host "Choisissez une categorie (Audio uniquement) : " -NoNewline
-    
-    $keyAudio = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    $drv = $keyAudio.Character.ToString().ToUpper()
-    
-    if ($drv -eq "Q") { return }
-    if ("STUVWXY" -notlike "*$drv*") { return }
-    
-    Invoke-Processing -TargetDrive $drv -isAudioOnly $true
 }
 
 # ============================================================
@@ -480,15 +455,12 @@ function Show-Menu {
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
     Write-Host "[V] Spectacle                  "
     Write-Host "================================================"
-    Write-Host "         Audio FR & VOSTFR"                     -ForegroundColor DarkYellow
-    Write-Host "[M] ENTRER DANS LE MENU AUDIO"                  -ForegroundColor DarkYellow
-    Write-Host "================================================"
     Write-Host "         AUDITEUR EMBY 10-BIT"                  -ForegroundColor Magenta
     Write-Host "[A] AUDITER UNE BIBLIOTHEQUE"                   -ForegroundColor Magenta
     Write-Host "================================================"
-    Write-Host "         MISES A JOUR OUTILS"                    -ForegroundColor Yellow
-    Write-Host "[H] MAJ HandBrake    [F] MAJ FFmpeg"            -ForegroundColor Yellow
-    Write-Host "[K] $TxtMajMkv"                                 -ForegroundColor Yellow
+    Write-Host "         MISES A JOUR OUTILS"                    -ForegroundColor DarkYellow
+    Write-Host "[H] MAJ HandBrake    [F] MAJ FFmpeg"            -ForegroundColor DarkYellow
+    Write-Host "[K] $TxtMajMkv"                                 -ForegroundColor DarkYellow
     Write-Host "================================================"
     Write-Host "         Quitter Emby Optimizer"                -ForegroundColor Red
     Write-Host "[Q] Quitter"                                    -ForegroundColor Red
@@ -507,7 +479,6 @@ while ($true) {
     if ($SEL -eq "F") { Update-FFmpeg ; continue }
     if ($SEL -eq "K") { Update-MKVToolNix ; continue }
     if ($SEL -eq "A") { Start-Audit ; continue }
-    if ($SEL -eq "M") { Start-AudioMenu ; continue }
 
     if ("STUVWXY" -notlike "*$SEL*") { continue }
     
