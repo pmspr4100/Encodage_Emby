@@ -1,5 +1,5 @@
 # ============================================================
-#          OPTIMISEUR & AUDITEUR EMBY 10-BIT V33
+#          OPTIMISEUR & AUDITEUR EMBY 10-BIT V34
 # ============================================================
 
 $ErrorActionPreference = "Continue"
@@ -24,6 +24,15 @@ $mkvPropEdit = Join-Path $MKV_DIR "mkvpropedit.exe"
 
 $T_DIR  = "Z:\Encoder_Emby"
 $L_BASE = "Z:\Encoder_Emby"
+
+# --- CONFIGURATION TRAILERS / BACKDROPS ---
+# Paramètres pour les Bandes-annonces (Trailers) - Standard Opening
+$TrailerOffset  = 5    # Saute les logos du début
+$TrailerDuration = 90   # 1min30 pour l'opening complet
+
+# Paramètres pour les Arrière-plans (Backdrops) - Court et boucle rapide
+$BackdropOffset   = 20   # Commence un peu plus tard
+$BackdropDuration = 30   # 30 secondes en boucle
 
 # --- ARCHITECTURE DES LOGS UNIFORMISÉE ---
 $D_LOG_VIDEO = Join-Path $L_BASE "Encodage"   
@@ -69,13 +78,13 @@ function Update-FFmpeg {
     Write-Host "        $($TxtMAJ.ToUpper()) FFMPEG" -ForegroundColor Yellow
     Write-Host "============================================" -ForegroundColor Yellow
     try {
-        Write-Host "[+] Telechargement du pack stable..." -ForegroundColor Cyan
         $ffUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
         $tmp = Join-Path $env:TEMP "ff.zip"
         $ext = Join-Path $env:TEMP "ff_ext"
         
         if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }
         
+        Write-Host "[+] Telechargement du pack stable..." -ForegroundColor Cyan
         Invoke-WebRequest -Uri $ffUrl -OutFile $tmp -UseBasicParsing
         Write-Host "[+] Extraction..." -ForegroundColor Cyan
         Expand-Archive -Path $tmp -DestinationPath $ext -Force
@@ -96,7 +105,6 @@ function Update-FFmpeg {
     } catch { 
         Write-Host "`n[!] ERREUR CRITIQUE :" -ForegroundColor Red
         Write-Host $_.Exception.Message -ForegroundColor Red
-        Write-Host "Veuillez fermer tout logiciel utilisant FFmpeg/Emby et reessayer." -ForegroundColor Red
     }
     Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 5
 }
@@ -201,6 +209,52 @@ function Start-Audit {
     Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 3
 }
 
+function Invoke-EmbyMediaExtraction {
+    param ([string]$TargetDrive)
+    $ROOT = "$($TargetDrive):\"
+    if (-not (Test-Path $ROOT)) { return }
+    if (-not (Test-Path $FF)) { Write-Host "[!] FFmpeg introuvable pour l'extraction de trailers/backdrops." -ForegroundColor Red; return }
+
+    Write-Host "`n--- GENERATION EN COURS DES TRAILERS & BACKDROPS SUR $ROOT ---" -ForegroundColor Cyan
+    $SeriesFolders = Get-ChildItem -Path $ROOT -Directory
+
+    foreach ($Series in $SeriesFolders) {
+        $TrailersDir  = Join-Path $Series.FullName "trailers"
+        $BackdropsDir = Join-Path $Series.FullName "backdrops"
+        $ThemeMkvTrailerPath  = Join-Path $TrailersDir "theme.mkv"
+        $ThemeMkvBackdropPath = Join-Path $BackdropsDir "theme.mkv"
+
+        if ((Test-Path $ThemeMkvTrailerPath) -and (Test-Path $ThemeMkvBackdropPath)) { continue }
+
+        $FirstEpisode = Get-ChildItem -Path $Series.FullName -Filter "*.mkv" -Recurse | 
+                        Where-Object { $_.FullName -notlike "*\trailers\*" -and $_.FullName -notlike "*\backdrops\*" } |
+                        Where-Object { $_.FullName -match "S01|Season 01|Saison 1" } | 
+                        Select-Object -First 1
+
+        if (-not $FirstEpisode) {
+            $FirstEpisode = Get-ChildItem -Path $Series.FullName -Filter "*.mkv" -Recurse | 
+                            Where-Object { $_.FullName -notlike "*\trailers\*" -and $_.FullName -notlike "*\backdrops\*" } |
+                            Select-Object -First 1
+        }
+
+        if (-not $FirstEpisode) { continue }
+
+        # Extraction du Trailer (Paramètres longs)
+        if (-not (Test-Path $ThemeMkvTrailerPath)) {
+            if (-not (Test-Path $TrailersDir)) { New-Item -Path $TrailersDir -ItemType Directory -Force | Out-Null }
+            Write-Host "[+] Extraction Trailer -> $($Series.Name)/trailers/theme.mkv ($global:TrailerDuration s)" -ForegroundColor Green
+            & $FF -ss $global:TrailerOffset -t $global:TrailerDuration -i "$($FirstEpisode.FullName)" -c copy -y "$ThemeMkvTrailerPath" 2>$null
+        }
+
+        # Extraction du Backdrop (Paramètres courts)
+        if (-not (Test-Path $ThemeMkvBackdropPath)) {
+            if (-not (Test-Path $BackdropsDir)) { New-Item -Path $BackdropsDir -ItemType Directory -Force | Out-Null }
+            Write-Host "[+] Extraction Backdrop -> $($Series.Name)/backdrops/theme.mkv ($global:BackdropDuration s)" -ForegroundColor Green
+            & $FF -ss $global:BackdropOffset -t $global:BackdropDuration -i "$($FirstEpisode.FullName)" -c copy -y "$ThemeMkvBackdropPath" 2>$null
+        }
+    }
+}
+
 # ============================================================
 # TRAITEMENT PRINCIPAL MODIFICATION FLAGS IN-PLACE / ENCODAGE
 # ============================================================
@@ -234,6 +288,8 @@ function Invoke-Processing {
     foreach ($file in $files) {
         $current++
         if ($file.Extension -eq ".old") { continue }
+        
+        if ($file.DirectoryName -like "*\trailers*" -or $file.DirectoryName -like "*\backdrops*") { continue }
 
         $logPath = Join-Path $L_ROOT $file.DirectoryName.Replace($ROOT, "")
         $logFile = Join-Path $logPath "$($file.BaseName).txt"
@@ -261,7 +317,6 @@ function Invoke-Processing {
         Write-Host "[ENCOURS] -> $($file.Name)" -ForegroundColor White
         
         if ($isAudioOnly) {
-            # --- MODIFICATION IN-PLACE VIA MKVPROPEDIT (LOGIQUE CORRIGÉE V33) ---
             try {
                 $audioTracks = & $FP -v error -select_streams a -show_entries stream=index:stream_tags=language -of csv=p=0 "$($file.FullName)"
                 $subTracks = & $FP -v error -select_streams s -show_entries stream=index:stream_tags=id,language:stream_tags=title -of csv=p=0 "$($file.FullName)"
@@ -269,8 +324,6 @@ function Invoke-Processing {
                 $propArgs = @("$($file.FullName)")
 
                 if ("TW" -like "*$TargetDrive*") {
-                    # --- CAS MANGAS / ANIMATIONS (T & W) ---
-                    # Audio : Japonais par défaut (on force la première piste japonaise trouvée)
                     $aIdx = 1
                     $foundJpn = $false
                     foreach ($track in ($audioTracks -split "`n")) {
@@ -285,7 +338,6 @@ function Invoke-Processing {
                         $aIdx++
                     }
                     
-                    # Sous-titres : FR Complet par défaut (On cherche le premier FR non-forced)
                     $sIdx = 1
                     $foundSub = $false
                     foreach ($sub in ($subTracks -split "`n")) {
@@ -303,8 +355,6 @@ function Invoke-Processing {
                         $sIdx++
                     }
                 } else {
-                    # --- CAS FILMS / SERIES / SPECTACLES / ANIMES (S, U, V, X, Y) ---
-                    # Audio : Français par défaut (on force la première piste française trouvée)
                     $aIdx = 1
                     $foundFraAudio = $false
                     foreach ($track in ($audioTracks -split "`n")) {
@@ -319,7 +369,6 @@ function Invoke-Processing {
                         $aIdx++
                     }
                     
-                    # Sous-titres : FR Forced activé par défaut (Le premier "Forced" français trouvé)
                     $sIdx = 1
                     $foundFraForced = $false
                     foreach ($sub in ($subTracks -split "`n")) {
@@ -332,7 +381,6 @@ function Invoke-Processing {
                                 $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=0", "--edit", "track:s$sIdx", "--set", "flag-forced=0")
                             }
                         } else {
-                            # On s'assure que toutes les autres pistes (complets, anglais, etc.) perdent leurs flags default/forced
                             $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=0", "--edit", "track:s$sIdx", "--set", "flag-forced=0")
                         }
                         $sIdx++
@@ -352,7 +400,6 @@ function Invoke-Processing {
                 "ERREUR EN-TETE | $($file.FullName) | $($_.Exception.Message)" | Out-File -LiteralPath $ErrorLogFile -Append
             }
         } else {
-            # --- ENCODAGE VIDEO COMPLET (CRF 28 TOUJOURS FIXE) ---
             $TS = Get-Date -Format "HHmmss"
             $isBackdrop = ($file.DirectoryName -like "*\backdrops*")
             $outExt = "mkv"
@@ -362,7 +409,6 @@ function Invoke-Processing {
             $Quality = 28
             $ResParam = "--maxWidth 1920"
 
-            # Si le fichier depasse 1920px (4K), on enleve la limite de largeur mais on maintient -q 28
             if ($width -gt 1920) {
                 $ResParam = "" 
                 Write-Host "[!] Source 4K detectee : Conservation de la resolution d'origine (Qualite fixe CQ 28)." -ForegroundColor Cyan
@@ -380,7 +426,6 @@ function Invoke-Processing {
             
             $proc = Start-Process -FilePath $HB -ArgumentList $hbArgs -Wait -NoNewWindow -PassThru
 
-            # --- POST-TRAITEMENT FLAGS SUBTITLES POUR HANDBRAKE ---
             if (Test-Path $workOut) {
                 $probeOutput = & $FP -v error -select_streams s -show_entries stream=index:stream_tags=title -of csv=p=0 "$workOut"
                 $tracks = $probeOutput -split "`n"
@@ -449,7 +494,7 @@ function Invoke-Processing {
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "         ENCODAGE HEVC 10-BIT V33"    -ForegroundColor Cyan
+    Write-Host "         ENCODAGE HEVC 10-BIT V34"    -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
@@ -485,7 +530,10 @@ while ($true) {
     Write-Host "`n[>>>] DEBUT DE L'ENCODAGE VIDEO SUR LE LECTEUR $SEL..." -ForegroundColor Cyan
     Invoke-Processing -TargetDrive $SEL -isAudioOnly $false
     
-    Write-Host "`n[>>>] ENCODAGE TERMINE. ENCHAINEMENT SUR L'OPTIMISATION DES FLAGS IN-PLACE SUR $SEL..." -ForegroundColor DarkYellow
+    # --- ÉTAPE : EXTRACTION DES TRAILERS/BACKDROPS DEPUIS LES SOURCES DÉJÀ ENCODÉES ---
+    Invoke-EmbyMediaExtraction -TargetDrive $SEL
+    
+    Write-Host "`n[>>>] TRAITEMENT VIDÉO & EXTRACTIONS TERMINÉS. OPTIMISATION DES FLAGS IN-PLACE SUR $SEL..." -ForegroundColor DarkYellow
     Start-Sleep -Seconds 2
     Invoke-Processing -TargetDrive $SEL -isAudioOnly $true
 }
