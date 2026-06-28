@@ -1,5 +1,5 @@
 # ============================================================
-#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V35
+#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V37.0
 # ============================================================
 
 $ErrorActionPreference = "Continue"
@@ -218,6 +218,9 @@ function Start-Audit {
 
 function Invoke-EmbyMediaExtraction {
     param ([string]$TargetDrive)
+    
+    if ("YXWV" -like "*$TargetDrive*") { return }
+
     $ROOT = "$($TargetDrive):\"
     if (-not (Test-Path $ROOT)) { return }
     if (-not (Test-Path $FF)) { Write-Host "[!] FFmpeg introuvable pour l'extraction de trailers/backdrops." -ForegroundColor Red; return }
@@ -274,6 +277,109 @@ function Invoke-EmbyMediaExtraction {
 }
 
 # ============================================================
+# LOGIQUE MAÎTRESSE DE MISE A JOUR DU XML NFO via .NET NATIVE
+# ============================================================
+function Apply-NfoXmlChanges {
+    param (
+        [string]$Path,
+        [string]$Title,
+        [string]$Tag
+    )
+    
+    $nfoContent = "<?xml version=`"1.0`" encoding=`"utf-8`" standalone=`"yes`"?><$Tag><title>$Title</title><sorttitle>$Title</sorttitle><lockedfields>Title|SortTitle</lockedfields></$Tag>"
+
+    if ([System.IO.File]::Exists($Path)) {
+        try {
+            $rawXml = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+            
+            [xml]$xml = New-Object System.Xml.XmlDocument
+            $xml.LoadXml($rawXml)
+            
+            $rootNode = $xml.DocumentElement
+            if ($rootNode) {
+                $rootNode.title = $Title
+                $rootNode.sorttitle = $Title
+                
+                if (-not $rootNode.lockedfields) {
+                    $node = $xml.CreateElement("lockedfields")
+                    $node.InnerText = "Title|SortTitle"
+                    [void]$rootNode.AppendChild($node)
+                } else { 
+                    $rootNode.lockedfields = "Title|SortTitle" 
+                }
+                
+                $xml.Save($Path)
+                Write-Host "[#] NFO Verrouille (Titre = $Title) : [$(Split-Path $Path -Leaf)]" -ForegroundColor Green
+            } else { throw }
+        } catch {
+            try {
+                [System.IO.File]::WriteAllText($Path, $nfoContent, [System.Text.Encoding]::UTF8)
+                Write-Host "[+] NFO Re-Généré (Titre : $Title) : [$(Split-Path $Path -Leaf)]" -ForegroundColor Cyan
+            } catch {}
+        }
+    } else {
+        try {
+            [System.IO.File]::WriteAllText($Path, $nfoContent, [System.Text.Encoding]::UTF8)
+            Write-Host "[+] Nouveau NFO Créé (Titre : $Title) : [$(Split-Path $Path -Leaf)]" -ForegroundColor Cyan
+        } catch {
+            Write-Host "[!] Impossible d'écrire le fichier NFO : [$(Split-Path $Path -Leaf)]" -ForegroundColor Red
+        }
+    }
+}
+
+# --- VERROUILLAGE DES NFO INDIVIDUELS ---
+function Set-EmbyNfoLock {
+    param (
+        [string]$FileDirectory,
+        [string]$FileName,
+        [string]$TargetDrive
+    )
+    
+    $BaseName = [System.IO.Path]::GetFileNameWithoutExtension($FileName)
+    $nfoPath = Join-Path $FileDirectory "$BaseName.nfo"
+    
+    $TargetTitle = ""
+    $XmlRootTag  = "movie"
+
+    if ("YXWV" -like "*$TargetDrive*") {
+        $FolderInfo = Get-Item -LiteralPath $FileDirectory
+        $TargetTitle = $FolderInfo.Name
+        if ($TargetTitle -match "Saison|Season|S\d+") {
+            $TargetTitle = $FolderInfo.Parent.Name
+        }
+        $XmlRootTag = "movie"
+    } else {
+        $TargetTitle = $BaseName
+        $XmlRootTag = "episodedetails"
+    }
+
+    Apply-NfoXmlChanges -Path $nfoPath -Title $TargetTitle -Tag $XmlRootTag
+}
+
+# --- VERROUILLAGE DES NFO RACINES (tvshow.nfo) ---
+function Set-EmbyTvShowRootLock {
+    param (
+        [string]$TargetDrive
+    )
+    if ("YXWV" -like "*$TargetDrive*") { return }
+    
+    $ROOT = "$($TargetDrive):\"
+    if (-not (Test-Path $ROOT)) { return }
+
+    Write-Host "`n--- SCAN & VERROUILLAGE DES NFO RACINES (tvshow.nfo) SUR $ROOT ---" -ForegroundColor Cyan
+    $SeriesFolders = Get-ChildItem -Path $ROOT -Directory
+
+    foreach ($Series in $SeriesFolders) {
+        $nfoTvShowPath = Join-Path $Series.FullName "tvshow.nfo"
+        $nfoCustomPath = Join-Path $Series.FullName "$($Series.Name).nfo"
+        
+        $FinalPath = if (Test-Path -LiteralPath $nfoTvShowPath) { $nfoTvShowPath } else { $nfoCustomPath }
+        
+        Apply-NfoXmlChanges -Path $FinalPath -Title $Series.Name -Tag "tvshow"
+    }
+}
+
+# ============================================================
 # TRAITEMENT PRINCIPAL MODIFICATION FLAGS IN-PLACE / ENCODAGE
 # ============================================================
 function Invoke-Processing {
@@ -306,7 +412,6 @@ function Invoke-Processing {
     foreach ($file in $files) {
         $current++
         if ($file.Extension -eq ".old") { continue }
-        
         if ($file.DirectoryName -like "*\trailers*" -or $file.DirectoryName -like "*\backdrops*") { continue }
 
         $logPath = Join-Path $L_ROOT $file.DirectoryName.Replace($ROOT, "")
@@ -314,11 +419,13 @@ function Invoke-Processing {
         
         if (Test-Path -LiteralPath $logFile) {
             Write-Host "[$current/$total] [$TxtHEVC] $($file.Name)" -ForegroundColor Gray
+            Set-EmbyNfoLock -FileDirectory $file.DirectoryName -FileName $file.Name -TargetDrive $TargetDrive
             continue
         }
 
         $codec = "Inconnu"
         $width = 1920
+        # --- CONFIGURATION VALIDE ET SÉCURISÉE AVEC PARENTHÈSE FERMANTE ---
         if (Test-Path $FP) {
             try {
                 $probeData = & $FP -v error -select_streams v:0 -show_entries stream=codec_name,width -of default=noprint_wrappers=1:nokey=0 "$($file.FullName)" 2>&1
@@ -418,8 +525,10 @@ function Invoke-Processing {
                 if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
                 "OK (In-Place Property Optimization via mkvpropedit)" | Out-File -LiteralPath $logFile -Force
                 
+                Set-EmbyNfoLock -FileDirectory $file.DirectoryName -FileName $file.Name -TargetDrive $TargetDrive
+
                 Write-Host "============================================" -ForegroundColor Green
-                Write-Host "[OK] $TxtTerminer : Drapeaux corriges." -ForegroundColor Green
+                Write-Host "[OK] $TxtTerminer : Flags corriges." -ForegroundColor Green
                 Write-Host "============================================" -ForegroundColor Green
             } catch {
                 Write-Host "[!] ERREUR : Edition des en-tetes impossible." -ForegroundColor Red
@@ -439,7 +548,7 @@ function Invoke-Processing {
             # Si le fichier depasse 1920px (4K), on enleve la limite de largeur mais on maintient -q 28
             if ($width -gt 1920) {
                 $ResParam = "" 
-                Write-Host "[!] Source 4K detectee : Conservation de la resolution d'origine (Qualite fixe CQ 28)." -ForegroundColor Cyan
+                Write-Host "[!] Source 4K detectee : Resolution conservee (CQ 28)." -ForegroundColor Cyan
             }
 
             if ($isBackdrop) {
@@ -495,6 +604,8 @@ function Invoke-Processing {
                         if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
                         "OK (Full Encode - Source:$codec)" | Out-File -LiteralPath $logFile -Force
                         
+                        Set-EmbyNfoLock -FileDirectory $file.DirectoryName -FileName $file.Name -TargetDrive $TargetDrive
+
                         Write-Host "============================================" -ForegroundColor Green
                         Write-Host "[OK] $TxtTerminer : Traitement effectue." -ForegroundColor Green
                         Write-Host "============================================" -ForegroundColor Green
@@ -523,7 +634,7 @@ function Invoke-Processing {
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "           ENCODAGE HEVC 10-BIT V35"    -ForegroundColor Cyan
+    Write-Host "           ENCODAGE HEVC 10-BIT V37"    -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
@@ -556,13 +667,18 @@ while ($true) {
 
     if ("STUVWXY" -notlike "*$SEL*") { continue }
     
+    # 1. Traitement principal d'encodage
     Write-Host "`n[>>>] DEBUT DE L'ENCODAGE VIDEO SUR LE LECTEUR $SEL..." -ForegroundColor Cyan
     Invoke-Processing -TargetDrive $SEL -isAudioOnly $false
     
-    # --- ÉTAPE : EXTRACTION DES TRAILERS/BACKDROPS DEPUIS LES SOURCES DÉJÀ ENCODÉES ---
+    # 2. Génération Trailers / Backdrops (uniquement Séries)
     Invoke-EmbyMediaExtraction -TargetDrive $SEL
     
-    Write-Host "`n[>>>] TRAITEMENT VIDEO & EXTRACTIONS TERMINES. OPTIMISATION DES FLAGS IN-PLACE SUR $SEL..." -ForegroundColor DarkYellow
+    # 3. Traitement global des NFO racines (tvshow.nfo)
+    Set-EmbyTvShowRootLock -TargetDrive $SEL
+    
+    # 4. Ajustement final des flags audio/sous-titres in-place
+    Write-Host "`n[>>>] ENCODAGE VIDEO EFFECTUER. ETAPE FINALE : FLAGS & SECURITER NFO SUR $SEL..." -ForegroundColor DarkYellow
     Start-Sleep -Seconds 2
     Invoke-Processing -TargetDrive $SEL -isAudioOnly $true
 }
