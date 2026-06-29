@@ -218,9 +218,6 @@ function Start-Audit {
 
 function Invoke-EmbyMediaExtraction {
     param ([string]$TargetDrive)
-    
-    if ("YXWV" -like "*$TargetDrive*") { return }
-
     $ROOT = "$($TargetDrive):\"
     if (-not (Test-Path $ROOT)) { return }
     if (-not (Test-Path $FF)) { Write-Host "[!] FFmpeg introuvable pour l'extraction de trailers/backdrops." -ForegroundColor Red; return }
@@ -309,20 +306,23 @@ function Apply-NfoXmlChanges {
                 }
                 
                 $xml.Save($Path)
-                Write-Host "[#] NFO Verrouille (Titre = $Title) : [$(Split-Path $Path -Leaf)]" -ForegroundColor Green
+                Write-Host "[#] NFO Verrouille (Titre = $Title)" -ForegroundColor Green
+				Write-Host "[#] NFO Verrouille (SortTitle = $Title)" -ForegroundColor Green
             } else { throw }
         } catch {
             try {
                 [System.IO.File]::WriteAllText($Path, $nfoContent, [System.Text.Encoding]::UTF8)
-                Write-Host "[+] NFO Re-Généré (Titre : $Title) : [$(Split-Path $Path -Leaf)]" -ForegroundColor Cyan
+                Write-Host "[+] NFO Re-Généré (Titre : $Title)" -ForegroundColor Cyan
+				Write-Host "[+] NFO Re-Généré (SortTitle : $Title)" -ForegroundColor Cyan
             } catch {}
         }
     } else {
         try {
             [System.IO.File]::WriteAllText($Path, $nfoContent, [System.Text.Encoding]::UTF8)
-            Write-Host "[+] Nouveau NFO Créé (Titre : $Title) : [$(Split-Path $Path -Leaf)]" -ForegroundColor Cyan
+            Write-Host "[+] Nouveau NFO Créé (Titre : $Title)" -ForegroundColor Cyan
+			 Write-Host "[+] Nouveau NFO Créé (SortTitle : $Title)" -ForegroundColor Cyan
         } catch {
-            Write-Host "[!] Impossible d'écrire le fichier NFO : [$(Split-Path $Path -Leaf)]" -ForegroundColor Red
+            Write-Host "[!] Impossible d'écrire le fichier NFO" -ForegroundColor Red
         }
     }
 }
@@ -668,13 +668,15 @@ while ($true) {
     if ("STUVWXY" -notlike "*$SEL*") { continue }
     
     # 1. Traitement principal d'encodage
-    Write-Host "`n[>>>] DEBUT DE L'ENCODAGE VIDEO SUR LE LECTEUR $SEL..." -ForegroundColor Cyan
+    Write-Host "`n[>>>] DEBUT DE L'ENCODAGE VIDEO SUR LE LECTEUR $SEL..." -ForegroundColor DarkYellow
     Invoke-Processing -TargetDrive $SEL -isAudioOnly $false
     
     # 2. Génération Trailers / Backdrops (uniquement Séries)
+	Write-Host "`n[>>>] GENERATION TRAILERS & BACKDROPS SUR LE LECTEUR $SEL..." -ForegroundColor DarkYellow
     Invoke-EmbyMediaExtraction -TargetDrive $SEL
     
     # 3. Traitement global des NFO racines (tvshow.nfo)
+	Write-Host "`n[>>>] TRAITEMENT GLOBAL DES NFO SUR LE LECTEUR $SEL..." -ForegroundColor DarkYellow
     Set-EmbyTvShowRootLock -TargetDrive $SEL
     
     # 4. Ajustement final des flags audio/sous-titres in-place
