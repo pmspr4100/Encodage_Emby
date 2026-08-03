@@ -1,5 +1,5 @@
 # ============================================================
-#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V37.0
+#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V37.1
 # ============================================================
 
 $ErrorActionPreference = "Continue"
@@ -46,7 +46,7 @@ foreach ($dir in ($D_LOG_VIDEO, $D_LOG_AUDIO, $D_LOG_ERR)) {
 }
 
 # ============================================================
-# FONCTIONS DE MISE A JOUR & AUDIT
+# FONCTIONS DE MISE A JOUR
 # ============================================================
 function Update-HandBrake {
     Clear-Host
@@ -172,50 +172,6 @@ function Update-MKVToolNix {
     Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 4
 }
 
-function Start-Audit {
-    if (-not (Test-Path $FP)) {
-        Write-Host "[!] Erreur : FFprobe introuvable." -ForegroundColor Red
-        Start-Sleep 3 ; return
-    }
-    Clear-Host
-    Write-Host "============================================" -ForegroundColor Magenta
-    Write-Host "       AUDITEUR : CHOIX DU DOSSIER"          -ForegroundColor Magenta
-    Write-Host "============================================" -ForegroundColor Magenta
-    Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
-    Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
-    Write-Host "[V] Spectacle  [Q] Quitter             "
-    Write-Host "============================================"
-    Write-Host "Choisissez une categorie a auditer : " -NoNewline
-    $keyA = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    $drv = $keyA.Character.ToString().ToUpper()
-    if ($drv -eq "Q") { return }
-    if ("STUVWXY" -notlike "*$drv*") { return }
-    $A_ROOT = "$($drv):\"
-    if (Test-Path $A_ROOT) {
-        $AuditLogDir = Join-Path $L_BASE "Audit"
-        if (-not (Test-Path $AuditLogDir)) { New-Item -ItemType Directory -Path $AuditLogDir -Force | Out-Null }
-        $TimeStamp = Get-Date -Format "yyyyMMdd_HHmm"
-        $CurrentReport = Join-Path $AuditLogDir "Audit_Lecteur_$($drv)_$($TimeStamp).txt"
-        Write-Host "`n`n--- SCAN AUDIT EN COURS SUR $A_ROOT ---" -ForegroundColor Yellow
-        
-        $AllowedExts = @(".mp4",".mkv",".webm",".mov",".qt",".m4v",".wmv",".avi",".ts",".m2ts",".mpg",".mpeg",".vob",".flv",".ogv",".divx",".xvid")
-        $aFiles = Get-ChildItem -Path $A_ROOT -Recurse -File | Where-Object { $AllowedExts -contains $_.Extension.ToLower() }
-        
-        $count = 0
-        foreach ($f in $aFiles) {
-            $probe = & $FP -v error -select_streams v:0 -show_entries stream=codec_name,pix_fmt -of csv=p=0:s="|" "$($f.FullName)"
-            if ($probe -notlike "hevc*10*") {
-                Write-Host "[X] A REFAIRE : $($f.Name)" -ForegroundColor Yellow
-                "$($f.FullName) | Codec: $probe" | Out-File $CurrentReport -Append -Encoding utf8
-                $count++
-            } else { Write-Host "[V] CONFORME  : $($f.Name)" -ForegroundColor Gray }
-        }
-        Write-Host "`n$TxtTerminer ! $count fichiers trouves." -ForegroundColor Green
-        if ($count -gt 0) { Start-Process notepad.exe $CurrentReport }
-    }
-    Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 3
-}
-
 function Invoke-EmbyMediaExtraction {
     param ([string]$TargetDrive)
     $ROOT = "$($TargetDrive):\"
@@ -283,7 +239,7 @@ function Apply-NfoXmlChanges {
         [string]$Tag
     )
     
-    $nfoContent = "<?xml version=`"1.0`" encoding=`"utf-8`" standalone=`"yes`"?><$Tag><title>$Title</title><sorttitle>$Title</sorttitle><lockedfields>Title|SortTitle</lockedfields></$Tag>"
+    $nfoContent = "<?xml version=`"1.0`" encoding=`"utf-8`" standalone=`"yes`"?><$Tag>`n`t<title>$Title</title>`n`t<sorttitle>$Title</sorttitle>`n`t<lockedfields>Title|SortTitle</lockedfields>`n</$Tag>"
 
     if ([System.IO.File]::Exists($Path)) {
         try {
@@ -628,20 +584,49 @@ function Invoke-Processing {
     Start-Sleep 3
 }
 
-# ============================================================
-# STRUCTURE PRINCIPALE DU MENU
-# ============================================================
+function Invoke-ProcessAllDrives {
+    $drivesList = @("S", "T", "U", "V", "W", "X", "Y")
+    
+    Write-Host "`n================================================" -ForegroundColor Cyan
+    Write-Host "   LANCEMENT DU TRAITEMENT GLOBAL DE TOUS LES DISQUES (A)" -ForegroundColor Cyan
+    Write-Host "================================================" -ForegroundColor Cyan
+    
+    foreach ($drv in $drivesList) {
+        $ROOT = "$($drv):\"
+        if (Test-Path $ROOT) {
+            Write-Host "`n[###] TRAITEMENT DU DISQUE : $drv" -ForegroundColor Yellow
+            
+            Write-Host "[>>>] DEBUT DE L'ENCODAGE VIDEO SUR LE LECTEUR $drv..." -ForegroundColor DarkYellow
+            Invoke-Processing -TargetDrive $drv -isAudioOnly $false
+            
+            Write-Host "[>>>] GENERATION TRAILERS & BACKDROPS SUR LE LECTEUR $drv..." -ForegroundColor DarkYellow
+            Invoke-EmbyMediaExtraction -TargetDrive $drv
+            
+            Write-Host "[>>>] TRAITEMENT GLOBAL DES NFO SUR LE LECTEUR $drv..." -ForegroundColor DarkYellow
+            Set-EmbyTvShowRootLock -TargetDrive $drv
+            
+            Write-Host "[>>>] ETAPE FINALE : FLAGS & SECURITER NFO SUR $drv..." -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 2
+            Invoke-Processing -TargetDrive $drv -isAudioOnly $true
+        } else {
+            Write-Host "`n[!] Le lecteur $drv n'est pas disponible, passage au suivant." -ForegroundColor Gray
+        }
+    }
+    
+    Write-Host "`n================================================" -ForegroundColor Green
+    Write-Host "     TOUS LES DISQUES ONT ETE TRAITES !"        -ForegroundColor Green
+    Write-Host "================================================" -ForegroundColor Green
+    Start-Sleep -Seconds 4
+}
+
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "           ENCODAGE HEVC 10-BIT V37"    -ForegroundColor Cyan
+    Write-Host "           ENCODAGE HEVC 10-BIT V37.1"  -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
-    Write-Host "[V] Spectacle                               "
-    Write-Host "================================================"
-    Write-Host "          AUDITEUR EMBY 10-BIT"                  -ForegroundColor Magenta
-    Write-Host "[A] AUDITER UNE BIBLIOTHEQUE"                   -ForegroundColor Magenta
+    Write-Host "[V] Spectacle  [A] TOUS LES DISQUES     "
     Write-Host "================================================"
     Write-Host "          MISES A JOUR OUTILS"                     -ForegroundColor DarkYellow
     Write-Host "[H] MAJ HandBrake    [F] MAJ FFmpeg"            -ForegroundColor DarkYellow
@@ -654,16 +639,31 @@ function Show-Menu {
 
 while ($true) {
     Show-Menu
-    Write-Host "Appuyez sur une touche : " -NoNewline
+    Write-Host "Appuyez sur une lettre : " -NoNewline
+    
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     $SEL = $key.Character.ToString().ToUpper()
-    Write-Host "$SEL" -ForegroundColor Green
+    
+    # Si la touche pressée fait partie des lettres de disques ou commandes directes, on l'affiche et on continue sans besoin d'appuyer sur Entrée
+    if ($SEL -eq "A" -or $SEL -eq "H" -or $SEL -eq "F" -or $SEL -eq "K" -or $SEL -eq "Q" -or "STUVWXY" -like "*$SEL*") {
+        Write-Host "$SEL" -ForegroundColor Green
+    } else {
+        # Gestion spécifique si l'utilisateur souhaite taper "A" au clavier sans Read-Host bloquant (on lit les caractères suivants si nécessaire ou on laisse la saisie classique)
+        $fullInput = $SEL
+        while ($Host.UI.RawUI.KeyAvailable) {
+            $nextKey = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            $fullInput += $nextKey.Character.ToString().Unicode.ToString() # Evite les soucis de conversion de caractères bruts si besoin
+            Write-Host "$($nextKey.Character)" -NoNewline -ForegroundColor Green
+        }
+        $SEL = $fullInput
+    }
+    Write-Host ""
 
     if ($SEL -eq "Q") { break }
     if ($SEL -eq "H") { Update-HandBrake ; continue }
     if ($SEL -eq "F") { Update-FFmpeg ; continue }
     if ($SEL -eq "K") { Update-MKVToolNix ; continue }
-    if ($SEL -eq "A") { Start-Audit ; continue }
+    if ($SEL -eq "A") { Invoke-ProcessAllDrives ; continue }
 
     if ("STUVWXY" -notlike "*$SEL*") { continue }
     
