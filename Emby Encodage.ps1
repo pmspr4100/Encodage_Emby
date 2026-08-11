@@ -1,5 +1,5 @@
 # ============================================================
-#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V37.1
+#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V38
 # ============================================================
 
 $ErrorActionPreference = "Continue"
@@ -39,9 +39,10 @@ $BackdropDuration = 30   # Séquence de 30 secondes en boucle
 # --- ARCHITECTURE DES LOGS UNIFORMISÉE ---
 $D_LOG_VIDEO = Join-Path $L_BASE "Encodage"   
 $D_LOG_AUDIO = Join-Path $L_BASE "Audio"      
+$D_LOG_TAG   = Join-Path $L_BASE "HVC1"   
 $D_LOG_ERR   = Join-Path $L_BASE "Erreurs"    
 
-foreach ($dir in ($D_LOG_VIDEO, $D_LOG_AUDIO, $D_LOG_ERR)) {
+foreach ($dir in ($D_LOG_VIDEO, $D_LOG_AUDIO, $D_LOG_TAG, $D_LOG_ERR)) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 }
 
@@ -172,6 +173,90 @@ function Update-MKVToolNix {
     Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 4
 }
 
+# ============================================================
+# MISE A JOUR DES TAGS HVC1 AVEC SELECTION DES LECTEURS & LOGS
+# ============================================================
+function Apply-Hvc1-Tags {
+    Clear-Host
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "   MISE A JOUR CIBLEE DES TAGS HVC1 (HEVC)"  -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "[Y] Films      [U] Series      [T] Mangas"
+    Write-Host "[X] Animes     [S] Cartoons    [W] Animations"
+    Write-Host "[V] Spectacle  [A] TOUS LES LECTEURS"
+    Write-Host "[R] Retour au menu principal"
+    Write-Host "============================================"
+    Write-Host "Choisissez le lecteur cible : " -NoNewline
+
+    $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    $SEL_DRIVE = $key.Character.ToString().ToUpper()
+    Write-Host "$SEL_DRIVE" -ForegroundColor Green
+
+    if ($SEL_DRIVE -eq "R") { return }
+
+    if (-not (Test-Path $FF)) { 
+        Write-Host "[!] FFmpeg introuvable !" -ForegroundColor Red 
+        Start-Sleep 2 
+        return 
+    }
+
+    $drivesToProcess = @()
+    if ($SEL_DRIVE -eq "A") {
+		$drivesToProcess = @("Y", "X", "W", "V", "U", "T", "S")
+    } elseif ("STUVWXY" -like "*$SEL_DRIVE*") {
+        $drivesToProcess = @($SEL_DRIVE)
+    } else {
+        Write-Host "[!] Choix invalide." -ForegroundColor Red
+        Start-Sleep 2
+        return
+    }
+
+    foreach ($drv in $drivesToProcess) {
+        $ROOT = "$($drv):\"
+        $L_ROOT = Join-Path $D_LOG_TAG $drv
+        $ErrorLogFile = Join-Path $D_LOG_ERR "Erreurs_Hvc1_$($drv)_$(Get-Date -Format 'yyyyMMdd').txt"
+
+        if (Test-Path $ROOT) {
+            Write-Host "`n--- SCAN DU LECTEUR $drv ---" -ForegroundColor Yellow
+            $files = Get-ChildItem -Path $ROOT -Filter "*.mkv" -Recurse | Where-Object { $_.Name -ne "theme.mkv" }
+            
+            foreach ($file in $files) {
+                $relativeDir = $file.DirectoryName.Replace($ROOT, "").Trim("\")
+                $logPath = if ([string]::IsNullOrEmpty($relativeDir)) { $L_ROOT } else { Join-Path $L_ROOT $relativeDir }
+                $logFile = Join-Path $logPath "$($file.BaseName).txt"
+
+                if (Test-Path -LiteralPath $logFile) {
+                    Write-Host "[$TxtHEVC] $($file.Name)" -ForegroundColor Gray
+                    continue
+                }
+
+                $codec = & $FP -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$($file.FullName)" 2>&1
+                if ($codec -match "hevc") {
+                    $tempOut = "$($file.FullName).tmp.mkv"
+                    Write-Host "[+] Mise a jour du tag pour : $($file.Name)" -ForegroundColor Green
+                    & $FF -v error -y -i "$($file.FullName)" -c copy -tag:v hvc1 "$tempOut" 2>$null
+                    
+                    if (Test-Path $tempOut) {
+                        Remove-Item -LiteralPath $file.FullName -Force
+                        Move-Item -LiteralPath $tempOut -Destination $file.FullName -Force
+
+                        if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
+                        "OK (Hvc1 Tag In-Place Update)" | Out-File -LiteralPath $logFile -Force
+                    } else {
+                        "ERREUR HVC1 TAG | $($file.FullName)" | Out-File -LiteralPath $ErrorLogFile -Append
+                    }
+                }
+            }
+        } else {
+            Write-Host "`n[!] Le lecteur $drv n'est pas disponible." -ForegroundColor Gray
+        }
+    }
+    Write-Host "`n============================================" -ForegroundColor Green
+    Write-Host "[OK] Traitement hvc1 termine." -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Green
+    Start-Sleep -Seconds 3
+}
+
 function Invoke-EmbyMediaExtraction {
     param ([string]$TargetDrive)
     $ROOT = "$($TargetDrive):\"
@@ -190,12 +275,14 @@ function Invoke-EmbyMediaExtraction {
         if ((Test-Path $ThemeMkvTrailerPath) -and (Test-Path $ThemeMkvBackdropPath)) { continue }
 
         $FirstEpisode = Get-ChildItem -Path $Series.FullName -Filter "*.mkv" -Recurse | 
+                        Where-Object { $_.Name -ne "theme.mkv" } |
                         Where-Object { $_.FullName -notlike "*\trailers\*" -and $_.FullName -notlike "*\backdrops\*" } |
                         Where-Object { $_.FullName -match "S01|Season 01|Saison 1" } | 
                         Select-Object -First 1
 
         if (-not $FirstEpisode) {
             $FirstEpisode = Get-ChildItem -Path $Series.FullName -Filter "*.mkv" -Recurse | 
+                            Where-Object { $_.Name -ne "theme.mkv" } |
                             Where-Object { $_.FullName -notlike "*\trailers\*" -and $_.FullName -notlike "*\backdrops\*" } |
                             Select-Object -First 1
         }
@@ -207,6 +294,7 @@ function Invoke-EmbyMediaExtraction {
             if (-not (Test-Path $TrailersDir)) { New-Item -Path $TrailersDir -ItemType Directory -Force | Out-Null }
             Write-Host "[+] Extraction Trailer -> $($Series.Name)/trailers/theme.mkv (3x$($global:ClipDuration)s)" -ForegroundColor Green
             
+            $tempTrailerRaw = Join-Path $T_DIR "temp_trailer_raw_$([Guid]::NewGuid()).mkv"
             & $FF -v error -y `
               -ss $global:T_Clip1 -i "$($FirstEpisode.FullName)" -t $global:ClipDuration `
               -ss $global:T_Clip2 -i "$($FirstEpisode.FullName)" -t $global:ClipDuration `
@@ -215,7 +303,12 @@ function Invoke-EmbyMediaExtraction {
               -map "[v]" -map "[a]" `
               -c:v libx265 -crf 28 `
               -c:a aac -b:a 128k `
-              "$ThemeMkvTrailerPath" 2>$null
+              "$tempTrailerRaw" 2>$null
+
+            if (Test-Path $tempTrailerRaw) {
+                & $FF -v error -y -i "$tempTrailerRaw" -c copy -tag:v hvc1 "$ThemeMkvTrailerPath" 2>$null
+                Remove-Item -LiteralPath $tempTrailerRaw -Force -ErrorAction SilentlyContinue
+            }
         }
 
         # Extraction du Backdrop Court (AVEC AUDIO, CRF 28)
@@ -224,7 +317,13 @@ function Invoke-EmbyMediaExtraction {
             Write-Host "[+] Extraction Backdrop -> $($Series.Name)/backdrops/theme.mkv ($global:BackdropDuration s)" -ForegroundColor Green
             
             # Remplacement de -an par l'encodage audio AAC pour conserver le son
-            & $FF -v error -y -ss $global:BackdropOffset -i "$($FirstEpisode.FullName)" -t $global:BackdropDuration -c:v libx265 -crf 28 -c:a aac -b:a 128k "$ThemeMkvBackdropPath" 2>$null
+            $tempBackdropRaw = Join-Path $T_DIR "temp_backdrop_raw_$([Guid]::NewGuid()).mkv"
+            & $FF -v error -y -ss $global:BackdropOffset -i "$($FirstEpisode.FullName)" -t $global:BackdropDuration -c:v libx265 -crf 28 -c:a aac -b:a 128k "$tempBackdropRaw" 2>$null
+
+            if (Test-Path $tempBackdropRaw) {
+                & $FF -v error -y -i "$tempBackdropRaw" -c copy -tag:v hvc1 "$ThemeMkvBackdropPath" 2>$null
+                Remove-Item -LiteralPath $tempBackdropRaw -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
@@ -352,6 +451,7 @@ function Invoke-Processing {
         $ErrorLogFile = Join-Path $D_LOG_ERR "Erreurs_Audio_$($TargetDrive)_$(Get-Date -Format 'yyyyMMdd').txt"
     } else {
         if (-not (Test-Path $HB)) { Write-Host "[!] HandBrakeCLI introuvable !" -ForegroundColor Red ; Start-Sleep 2 ; return }
+        # CORRECTION : On utilise le dossier de log unifié basé sur le nom du fichier au lieu de la taille
         $L_ROOT = Join-Path $D_LOG_VIDEO $TargetDrive
         $ErrorLogFile = Join-Path $D_LOG_ERR "Erreurs_Video_$($TargetDrive)_$(Get-Date -Format 'yyyyMMdd').txt"
     }
@@ -361,7 +461,7 @@ function Invoke-Processing {
     Write-Host "`n--- SCAN EN COURS SUR $ROOT ---" -ForegroundColor Yellow
     $Extensions = if ($isAudioOnly) { @(".mkv") } else { @(".mp4",".mkv",".webm",".mov",".qt",".m4v",".wmv",".avi",".ts",".m2ts",".mpg",".mpeg",".vob",".flv") }
     
-    $files = Get-ChildItem -Path $ROOT -Recurse -File | Where-Object { $Extensions -contains $_.Extension.ToLower() }
+    $files = Get-ChildItem -Path $ROOT -Recurse -File | Where-Object { $Extensions -contains $_.Extension.ToLower() } | Where-Object { $_.Name -ne "theme.mkv" }
     $total = $files.Count
     $current = 0
 
@@ -370,7 +470,10 @@ function Invoke-Processing {
         if ($file.Extension -eq ".old") { continue }
         if ($file.DirectoryName -like "*\trailers*" -or $file.DirectoryName -like "*\backdrops*") { continue }
 
-        $logPath = Join-Path $L_ROOT $file.DirectoryName.Replace($ROOT, "")
+        $relativeDir = $file.DirectoryName.Replace($ROOT, "").Trim("\")
+        $logPath = if ([string]::IsNullOrEmpty($relativeDir)) { $L_ROOT } else { Join-Path $L_ROOT $relativeDir }
+        
+        # CORRECTION : Utilisation du nom de fichier exact au lieu de la taille en Mo pour éviter le ré-encodage inutile
         $logFile = Join-Path $logPath "$($file.BaseName).txt"
         
         if (Test-Path -LiteralPath $logFile) {
@@ -495,32 +598,41 @@ function Invoke-Processing {
             $TS = Get-Date -Format "HHmmss"
             $isBackdrop = ($file.DirectoryName -like "*\backdrops*")
             $outExt = "mkv"
-            $workOut = Join-Path $T_DIR "temp_$($TargetDrive)_$TS.$outExt"
+            $workOutTemp = Join-Path $T_DIR "temp_$($TargetDrive)_$TS.$outExt"
+            $workOutTag  = Join-Path $T_DIR "temp_tag_$($TargetDrive)_$TS.$outExt"
             if (-not (Test-Path $T_DIR)) { [void](New-Item -ItemType Directory -Path $T_DIR) }
 
             $Quality = 28
-            $ResParam = "--maxWidth 1920"
+            $ResParam = "--maxWidth 1920 --crop-mode none"
 
             # Si le fichier depasse 1920px (4K), on enleve la limite de largeur mais on maintient -q 28
             if ($width -gt 1920) {
-                $ResParam = "" 
-                Write-Host "[!] Source 4K detectee : Resolution conservee (CQ 28)." -ForegroundColor Cyan
-            }
+			    $ResParam = "--crop-mode none" 
+			    Write-Host "[!] Source 4K detectee : Resolution conservee (CQ 28)." -ForegroundColor Cyan
+			}
 
             if ($isBackdrop) {
-                $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam"
+                $hbArgs = "-i `"$($file.FullName)`" -o `"$workOutTemp`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam"
             } else {
                 if ("TW" -like "*$TargetDrive*") {
-                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam --audio-lang-list jpn -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced 0 --native-language fra --all-subtitles --chapters 1-999 --markers"
+                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOutTemp`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam --audio-lang-list jpn -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced 0 --native-language fra --all-subtitles --chapters 1-999 --markers"
                 } else {
-                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOut`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam --audio-lang-list fra -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced --subtitle-default 1 --native-language fra --chapters 1-999 --markers"
+                    $hbArgs = "-i `"$($file.FullName)`" -o `"$workOutTemp`" -e nvenc_h265_10bit -q $Quality --encoder-preset fast $ResParam --audio-lang-list fra -E av_aac -B 192 --subtitle-lang-list fra --subtitle-forced --subtitle-default 1 --native-language fra --chapters 1-999 --markers"
                 }
             }
             
             $proc = Start-Process -FilePath $HB -ArgumentList $hbArgs -Wait -NoNewWindow -PassThru
 
             # --- POST-TRAITEMENT FLAGS SUBTITLES POUR HANDBRAKE ---
-            if (Test-Path $workOut) {
+            if (Test-Path $workOutTemp) {
+                & $FF -v error -y -i "$workOutTemp" -c copy -tag:v hvc1 "$workOutTag" 2>$null
+                if (Test-Path $workOutTag) {
+                    Remove-Item -LiteralPath $workOutTemp -Force -ErrorAction SilentlyContinue
+                    $workOut = $workOutTag
+                } else {
+                    $workOut = $workOutTemp
+                }
+
                 $probeOutput = & $FP -v error -select_streams s -show_entries stream=index:stream_tags=title -of csv=p=0 "$workOut"
                 $tracks = $probeOutput -split "`n"
                 
@@ -585,7 +697,7 @@ function Invoke-Processing {
 }
 
 function Invoke-ProcessAllDrives {
-    $drivesList = @("S", "T", "U", "V", "W", "X", "Y")
+	$drivesList = @("Y", "X", "W", "V", "U", "T", "S")
     
     Write-Host "`n================================================" -ForegroundColor Cyan
     Write-Host "   LANCEMENT DU TRAITEMENT GLOBAL DE TOUS LES DISQUES (A)" -ForegroundColor Cyan
@@ -622,15 +734,15 @@ function Invoke-ProcessAllDrives {
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "           ENCODAGE HEVC 10-BIT V37.1"  -ForegroundColor Cyan
+    Write-Host "           ENCODAGE HEVC 10-BIT V38.1"  -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
     Write-Host "[V] Spectacle  [A] TOUS LES DISQUES     "
     Write-Host "================================================"
-    Write-Host "          MISES A JOUR OUTILS"                     -ForegroundColor DarkYellow
+    Write-Host "          MISES A JOUR & OUTILS"                   -ForegroundColor DarkYellow
     Write-Host "[H] MAJ HandBrake    [F] MAJ FFmpeg"            -ForegroundColor DarkYellow
-    Write-Host "[K] $TxtMajMkv"                                 -ForegroundColor DarkYellow
+    Write-Host "[K] $TxtMajMkv   [P] Appliquer Tag HVC1"    -ForegroundColor DarkYellow
     Write-Host "================================================"
     Write-Host "          Quitter Emby Optimizer"                -ForegroundColor Red
     Write-Host "[Q] Quitter"                                    -ForegroundColor Red
@@ -645,14 +757,14 @@ while ($true) {
     $SEL = $key.Character.ToString().ToUpper()
     
     # Si la touche pressée fait partie des lettres de disques ou commandes directes, on l'affiche et on continue sans besoin d'appuyer sur Entrée
-    if ($SEL -eq "A" -or $SEL -eq "H" -or $SEL -eq "F" -or $SEL -eq "K" -or $SEL -eq "Q" -or "STUVWXY" -like "*$SEL*") {
+    if ($SEL -eq "A" -or $SEL -eq "H" -or $SEL -eq "F" -or $SEL -eq "K" -or $SEL -eq "P" -or $SEL -eq "Q" -or "STUVWXY" -like "*$SEL*") {
         Write-Host "$SEL" -ForegroundColor Green
     } else {
         # Gestion spécifique si l'utilisateur souhaite taper "A" au clavier sans Read-Host bloquant (on lit les caractères suivants si nécessaire ou on laisse la saisie classique)
         $fullInput = $SEL
         while ($Host.UI.RawUI.KeyAvailable) {
             $nextKey = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            $fullInput += $nextKey.Character.ToString().Unicode.ToString() # Evite les soucis de conversion de caractères bruts si besoin
+            $fullInput += $nextKey.Character.ToString().Unicode.ToString()
             Write-Host "$($nextKey.Character)" -NoNewline -ForegroundColor Green
         }
         $SEL = $fullInput
@@ -663,6 +775,7 @@ while ($true) {
     if ($SEL -eq "H") { Update-HandBrake ; continue }
     if ($SEL -eq "F") { Update-FFmpeg ; continue }
     if ($SEL -eq "K") { Update-MKVToolNix ; continue }
+    if ($SEL -eq "P") { Apply-Hvc1-Tags ; continue }
     if ($SEL -eq "A") { Invoke-ProcessAllDrives ; continue }
 
     if ("STUVWXY" -notlike "*$SEL*") { continue }
