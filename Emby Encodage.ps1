@@ -1,5 +1,5 @@
 # ============================================================
-#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V38
+#         OPTIMISEUR & AUDITEUR EMBY 10-BIT V38.3
 # ============================================================
 
 $ErrorActionPreference = "Continue"
@@ -562,7 +562,7 @@ function Invoke-Processing {
                         if ([string]::IsNullOrWhiteSpace($sub)) { continue }
                         if ($sub -match "fra|fr" -and $sub -notmatch "forced") {
                             if (-not $foundSub) {
-                                $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=1", "--edit", "track:s$sIdx", "--set", "flag-forced=0")
+                                $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=1", "--edit", "track:s$sIdx", "--set", "flag-forced=1")
                                 $foundSub = $true
                             } else {
                                 $propArgs += @("--edit", "track:s$sIdx", "--set", "flag-default=0", "--edit", "track:s$sIdx", "--set", "flag-forced=0")
@@ -668,9 +668,9 @@ function Invoke-Processing {
                 
                 if ("TW" -like "*$TargetDrive*") {
                     foreach ($line in $tracks) {
-                        if ($line -ne "" -and $line -notmatch "Forced" -and $line -notmatch "Japan") {
+                        if ($line -ne "" -and $line -notmatch "Forced") {
                             $idx = $line.Split(',')[0]
-                            & $mkvPropEdit "$workOut" --edit track:s$idx --set flag-default=1 --edit track:s$idx --set flag-forced=0 | Out-Null
+                            & $mkvPropEdit "$workOut" --edit track:s$idx --set flag-default=1 --edit track:s$idx --set flag-forced=1 | Out-Null
                             break
                         }
                     }
@@ -699,11 +699,9 @@ function Invoke-Processing {
                         Set-Acl -LiteralPath $finalPath -AclObject $originalAcl -ErrorAction SilentlyContinue
                         if (Test-Path -LiteralPath $oldPath) { Remove-Item -LiteralPath $oldPath -Force -ErrorAction SilentlyContinue }
                         
-                        # --- 1. Generation du log d'encodage ---
                         if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
                         "OK (Full Encode - Source:$codec)" | Out-File -LiteralPath $logFile -Force
                         
-                        # --- 2. Generation du log HVC1 associe ---
                         $L_ROOT_TAG = Join-Path $D_LOG_TAG $TargetDrive
                         $tagLogPath = if ([string]::IsNullOrEmpty($relativeDir)) { $L_ROOT_TAG } else { Join-Path $L_ROOT_TAG $relativeDir }
                         if (-not (Test-Path $tagLogPath)) { New-Item -ItemType Directory -Path $tagLogPath -Force | Out-Null }
@@ -772,7 +770,7 @@ function Invoke-ProcessAllDrives {
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "           ENCODAGE HEVC 10-BIT V39"  -ForegroundColor Cyan
+    Write-Host "           ENCODAGE HEVC 10-BIT V38.3"  -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
@@ -794,11 +792,9 @@ while ($true) {
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     $SEL = $key.Character.ToString().ToUpper()
 
-    # Si la touche pressée fait partie des lettres de disques ou commandes directes, on l'affiche et on continue sans besoin d'appuyer sur Entrée
     if ($SEL -eq "A" -or $SEL -eq "H" -or $SEL -eq "F" -or $SEL -eq "K" -or $SEL -eq "P" -or $SEL -eq "Q" -or "STUVWXY" -like "*$SEL*") {
         Write-Host "$SEL" -ForegroundColor Green
     } else {
-        # Gestion spécifique si l'utilisateur souhaite taper "A" au clavier sans Read-Host bloquant (on lit les caractères suivants si nécessaire ou on laisse la saisie classique)
         $fullInput = $SEL
         while ($Host.UI.RawUI.KeyAvailable) {
             $nextKey = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
