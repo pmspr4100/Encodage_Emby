@@ -55,20 +55,34 @@ function Update-HandBrake {
     Write-Host "      $($TxtMAJ.ToUpper()) HANDBRAKE" -ForegroundColor Yellow
     Write-Host "============================================" -ForegroundColor Yellow
     try {
-        Write-Host "[+] Recherche de la derniere version..." -NoNewline
-        $hbRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/HandBrake/HandBrake/releases/latest" -TimeoutSec 10 -UseBasicParsing
-        $hbUrl = $hbRelease.assets | Where-Object { $_.name -like "*HandBrakeCLI*-x86_64-Win_64.zip" } | Select-Object -ExpandProperty browser_download_url -First 1
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+        
+        Write-Host "[+] Recherche de la derniere version via GitHub..." -ForegroundColor Cyan
+        $headers = @{ "User-Agent" = "PowerShell-Script" }
+        $hbRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/HandBrake/HandBrake/releases/latest" -Headers $headers -TimeoutSec 15 -UseBasicParsing
+        
+        $hbUrl = $hbRelease.assets | Where-Object { $_.name -like "HandBrakeCLI*-win-x86_64.zip" } | Select-Object -ExpandProperty browser_download_url -First 1
+        
         if ($hbUrl) {
-            Write-Host " OK`n[+] Telechargement..." -ForegroundColor Cyan
+            Write-Host "[+] Telechargement en cours..." -ForegroundColor Cyan
             $tmp = Join-Path $env:TEMP "hb.zip"
-            Invoke-WebRequest -Uri $hbUrl -OutFile $tmp -UseBasicParsing
+            
+            Invoke-WebRequest -Uri $hbUrl -OutFile $tmp -TimeoutSec 60 -UseBasicParsing
+            
             Write-Host "[+] Extraction vers $HB_DIR..." -ForegroundColor Cyan
+            if (-not (Test-Path $HB_DIR)) { New-Item $HB_DIR -ItemType Directory -Force | Out-Null }
+            
             Expand-Archive -Path $tmp -DestinationPath $HB_DIR -Force
             Remove-Item $tmp -Force
             Write-Host "[OK] HandBrakeCLI mis a jour avec succes." -ForegroundColor Green
+        } else {
+            throw "Impossible de trouver l'asset HandBrakeCLI x86_64 pour Windows dans la derniere release."
         }
-    } catch { Write-Host "`n[!] ERREUR : Verifiez les droits Admin ou la connexion." -ForegroundColor Red }
-    Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 2
+    } catch { 
+        Write-Host "`n[!] ERREUR CRITIQUE : Impossible de mettre a jour HandBrake." -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+    }
+    Write-Host "`nRetour au menu..." -ForegroundColor Gray ; Start-Sleep -Seconds 5
 }
 
 function Update-FFmpeg {
@@ -232,18 +246,37 @@ function Apply-Hvc1-Tags {
 
                 $codec = & $FP -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$($file.FullName)" 2>&1
                 if ($codec -match "hevc") {
-                    $tempOut = "$($file.FullName).tmp.mkv"
+                    $TS = Get-Date -Format "HHmmssfff"
+                    $tempOut = Join-Path $T_DIR "temp_hvc1_$($drv)_$TS.mkv"
+                    if (-not (Test-Path $T_DIR)) { [void](New-Item -ItemType Directory -Path $T_DIR) }
+
                     Write-Host "[+] Mise a jour du tag pour : $($file.Name)" -ForegroundColor Green
                     & $FF -v error -y -i "$($file.FullName)" -c copy -tag:v hvc1 "$tempOut" 2>$null
                     
                     if (Test-Path $tempOut) {
-                        Remove-Item -LiteralPath $file.FullName -Force
-                        Move-Item -LiteralPath $tempOut -Destination $file.FullName -Force
+                        try {
+                            $originalAcl = Get-Acl -LiteralPath $file.FullName
+                            $oldPath = "$($file.FullName).old"
 
-                        if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
-                        "OK (Hvc1 Tag In-Place Update)" | Out-File -LiteralPath $logFile -Force
+                            Rename-Item -LiteralPath $file.FullName -NewName "$($file.Name).old" -Force -ErrorAction Stop
+                            Move-Item -LiteralPath $tempOut -Destination $file.FullName -Force -ErrorAction Stop
+                            Set-Acl -LiteralPath $file.FullName -AclObject $originalAcl -ErrorAction SilentlyContinue
+                            
+                            if (Test-Path -LiteralPath $oldPath) { 
+                                Remove-Item -LiteralPath $oldPath -Force -ErrorAction SilentlyContinue 
+                            }
+
+                            if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
+                            "OK (Hvc1 Tag In-Place Update)" | Out-File -LiteralPath $logFile -Force
+                        }
+                        catch {
+                            Write-Host "[!] ERREUR lors du remplacement du fichier." -ForegroundColor Red
+                            "ERREUR HVC1 REPLACE | $($file.FullName) | $($_.Exception.Message)" | Out-File -LiteralPath $ErrorLogFile -Append
+                            if (Test-Path -LiteralPath $tempOut) { Remove-Item -LiteralPath $tempOut -Force -ErrorAction SilentlyContinue }
+                        }
                     } else {
                         "ERREUR HVC1 TAG | $($file.FullName)" | Out-File -LiteralPath $ErrorLogFile -Append
+                        if (Test-Path -LiteralPath $tempOut) { Remove-Item -LiteralPath $tempOut -Force -ErrorAction SilentlyContinue }
                     }
                 }
             }
@@ -316,7 +349,6 @@ function Invoke-EmbyMediaExtraction {
             if (-not (Test-Path $BackdropsDir)) { New-Item -Path $BackdropsDir -ItemType Directory -Force | Out-Null }
             Write-Host "[+] Extraction Backdrop -> $($Series.Name)/backdrops/theme.mkv ($global:BackdropDuration s)" -ForegroundColor Green
             
-            # Remplacement de -an par l'encodage audio AAC pour conserver le son
             $tempBackdropRaw = Join-Path $T_DIR "temp_backdrop_raw_$([Guid]::NewGuid()).mkv"
             & $FF -v error -y -ss $global:BackdropOffset -i "$($FirstEpisode.FullName)" -t $global:BackdropDuration -c:v libx265 -crf 28 -c:a aac -b:a 128k "$tempBackdropRaw" 2>$null
 
@@ -451,7 +483,6 @@ function Invoke-Processing {
         $ErrorLogFile = Join-Path $D_LOG_ERR "Erreurs_Audio_$($TargetDrive)_$(Get-Date -Format 'yyyyMMdd').txt"
     } else {
         if (-not (Test-Path $HB)) { Write-Host "[!] HandBrakeCLI introuvable !" -ForegroundColor Red ; Start-Sleep 2 ; return }
-        # CORRECTION : On utilise le dossier de log unifié basé sur le nom du fichier au lieu de la taille
         $L_ROOT = Join-Path $D_LOG_VIDEO $TargetDrive
         $ErrorLogFile = Join-Path $D_LOG_ERR "Erreurs_Video_$($TargetDrive)_$(Get-Date -Format 'yyyyMMdd').txt"
     }
@@ -473,7 +504,6 @@ function Invoke-Processing {
         $relativeDir = $file.DirectoryName.Replace($ROOT, "").Trim("\")
         $logPath = if ([string]::IsNullOrEmpty($relativeDir)) { $L_ROOT } else { Join-Path $L_ROOT $relativeDir }
         
-        # CORRECTION : Utilisation du nom de fichier exact au lieu de la taille en Mo pour éviter le ré-encodage inutile
         $logFile = Join-Path $logPath "$($file.BaseName).txt"
         
         if (Test-Path -LiteralPath $logFile) {
@@ -607,8 +637,8 @@ function Invoke-Processing {
 
             # Si le fichier depasse 1920px (4K), on enleve la limite de largeur mais on maintient -q 28
             if ($width -gt 1920) {
-			    $ResParam = "--crop-mode none" 
-			    Write-Host "[!] Source 4K detectee : Resolution conservee (CQ 28)." -ForegroundColor Cyan
+			$ResParam = "--crop-mode none" 
+			Write-Host "[!] Source 4K detectee : Resolution conservee (CQ 28)." -ForegroundColor Cyan
 			}
 
             if ($isBackdrop) {
@@ -669,13 +699,21 @@ function Invoke-Processing {
                         Set-Acl -LiteralPath $finalPath -AclObject $originalAcl -ErrorAction SilentlyContinue
                         if (Test-Path -LiteralPath $oldPath) { Remove-Item -LiteralPath $oldPath -Force -ErrorAction SilentlyContinue }
                         
+                        # --- 1. Generation du log d'encodage ---
                         if (-not (Test-Path $logPath)) { New-Item -ItemType Directory -Path $logPath -Force | Out-Null }
                         "OK (Full Encode - Source:$codec)" | Out-File -LiteralPath $logFile -Force
+                        
+                        # --- 2. Generation du log HVC1 associe ---
+                        $L_ROOT_TAG = Join-Path $D_LOG_TAG $TargetDrive
+                        $tagLogPath = if ([string]::IsNullOrEmpty($relativeDir)) { $L_ROOT_TAG } else { Join-Path $L_ROOT_TAG $relativeDir }
+                        if (-not (Test-Path $tagLogPath)) { New-Item -ItemType Directory -Path $tagLogPath -Force | Out-Null }
+                        $tagLogFile = Join-Path $tagLogPath "$($file.BaseName).txt"
+                        "OK (Hvc1 Tag Applied via Encode)" | Out-File -LiteralPath $tagLogFile -Force
                         
                         Set-EmbyNfoLock -FileDirectory $file.DirectoryName -FileName $file.Name -TargetDrive $TargetDrive
 
                         Write-Host "============================================" -ForegroundColor Green
-                        Write-Host "[OK] $TxtTerminer : Traitement effectue." -ForegroundColor Green
+                        Write-Host "[OK] $TxtTerminer : Traitement effectue (Logs Video & HVC1 generes)." -ForegroundColor Green
                         Write-Host "============================================" -ForegroundColor Green
                     }
                     catch {
@@ -734,7 +772,7 @@ function Invoke-ProcessAllDrives {
 function Show-Menu {
     Clear-Host
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "           ENCODAGE HEVC 10-BIT V38.1"  -ForegroundColor Cyan
+    Write-Host "           ENCODAGE HEVC 10-BIT V39"  -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "[Y] Films      [U] $TxtSeries      [T] Mangas"
     Write-Host "[X] $TxtAnimes     [S] Cartoons    [W] Animations     "
@@ -755,7 +793,7 @@ while ($true) {
     
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     $SEL = $key.Character.ToString().ToUpper()
-    
+
     # Si la touche pressée fait partie des lettres de disques ou commandes directes, on l'affiche et on continue sans besoin d'appuyer sur Entrée
     if ($SEL -eq "A" -or $SEL -eq "H" -or $SEL -eq "F" -or $SEL -eq "K" -or $SEL -eq "P" -or $SEL -eq "Q" -or "STUVWXY" -like "*$SEL*") {
         Write-Host "$SEL" -ForegroundColor Green

@@ -1,74 +1,53 @@
-## Emby Optimizer & Auditor (HEVC 10-bit) — V37.0
+## Emby Optimizer & Auditeur (HEVC 10-Bit)
+Script PowerShell tout-en-un conçu pour automatiser l'optimisation, le nettoyage des métadonnées, la génération de trailers/backdrops et la mise à jour des outils pour un serveur multimédia Emby.
 
-Une solution industrielle en PowerShell conçue pour auditer, encoder, générer du contenu tiers et standardiser intelligemment vos bibliothèques de serveurs médias **Emby / Jellyfin / Plex** au format **HEVC 10-bit**. 
+## 🚀 Fonctionnalités principales
+Encodage Vidéo Intelligent : Conversion automatique des flux vidéo en HEVC 10-bit (via NVENC matériel) tout en préservant la qualité (CQ 28).
 
-Le script orchestre et maintient à jour **HandBrakeCLI**, **FFmpeg (FFprobe)** et **MKVToolNix** pour maximiser le DirectPlay tout en verrouillant la sécurité de vos métadonnées.
+Compatibilité Apple (Tags HVC1) : Ajout indispensable du tag vidéo hvc1 sur les flux HEVC pour garantir une lecture directe (sans transcodage) sur l'ensemble de vos appareils Apple (Apple TV, iPhone, iPad via Infuse par exemple).
 
----
+Gestion des Pistes & Langues :
 
-## 🚀 Vue d'ensemble du pipeline (V37)
+Pour les Films, Séries, Spectacles et Animes : Audio principal en Français et sous-titres forcés gérés automatiquement.
 
-Contrairement aux anciennes versions linéaires, la **V37** exécute une logique avancée à 4 étapes pour chaque volume réseau/catégorie cible (`S:` à `Y:`) :
+Pour les Mangas et Animations : Audio principal en Japonais et sous-titres en Français.
 
-1. **Encodage Vidéo Initial (`HandBrakeCLI`) :** Convertit tous les fichiers non conformes en HEVC 10-bit.
-2. **Génération Média Dynamique (`FFmpeg`) :** Extrait automatiquement des extraits vidéos pour créer des bandes-annonces (*trailers*) et des arrière-plans animés (*backdrops*) avec audio.
-3. **Sécurisation des NFO Racines (`Séries`) :** Analyse et verrouille les fichiers `.nfo` pour figer vos titres personnalisés.
-4. **Optimisation Spécifique In-Place (`mkvpropedit`) :** Réanalyse le fichier final pour configurer les en-têtes et drapeaux (*flags*) Audio/Sous-titres par défaut selon la catégorie, tout en injectant les verrous de métadonnées unitaires.
+Mise à jour automatisée des outils : Téléchargement et installation en un clic des dernières versions de HandBrakeCLI, FFmpeg et MKVToolNix.
 
----
+Trailers & Backdrops dynamiques : Découpe et création automatique de mini-trailers multi-extraits et d'arrière-plans (theme.mkv) pour vos séries à partir des épisodes.
 
-## 🛠️ Architecture et Fonctionnalités en Détail
+Verrouillage NFO (Emby) : Génération et verrouillage automatique des fichiers NFO et tvshow.nfo pour figer les titres et éviter les modifications indésirables par les scrapers.
 
-### 1. Gestionnaire de Mises à Jour Intégré
-Le script inclut des fonctions d'auto-mise à jour capables d'interroger les API distantes pour maintenir vos outils à la dernière version stable :
-* **HandBrake :** Interroge l'API GitHub (`HandBrake/HandBrake`), télécharge le binaire CLI x64 et l'extrait proprement.
-* **FFmpeg :** Récupère la version stable *Essentials* du dépôt officiel de Gyan.dev et remplace à chaud `ffmpeg.exe` et `ffprobe.exe`.
-* **MKVToolNix :** Interroge l'API Codeberg (`mbunkus/mkvtoolnix`) pour isoler le dernier numéro de tag stable, télécharge l'archive portable `.7z` et restructure proprement l'arborescence.
+Double Journalisation (Logs) : Suivi précis via des dossiers de logs séparés (Encodage, Audio, HVC1, Erreurs) pour éviter de retraiter inutilement les fichiers déjà optimisés.
 
-### 2. Auditeur de Bibliothèque Dédié (`Start-Audit`)
-Permet de lancer un scan de diagnostic profond à l'aide de `ffprobe`. Il vérifie le codec vidéo et le format de pixel de plus de 15 extensions différentes (`.mp4`, `.mkv`, `.avi`, `.ts`...). Tout fichier n'étant pas strictement identifié comme `hevc` en `10-bit` est consigné dans un rapport texte généré à la volée et ouvert automatiquement dans le Bloc-notes.
+## 🛠️ Prérequis
+Windows 10 / 11 avec PowerShell.
 
-### 3. Logique Métiers par Catégorie (Audio & Sous-titres) Français et VOSTFR
-Le traitement s'adapte précisément selon la lettre du lecteur réseau sélectionné :
-* **Mangas & Animations (Lecteurs T et W) :** Le script identifie et force la piste **Audio Japonaise** (`jpn`/`ja`) par défaut. Il recherche la piste de sous-titres **Français Complets** (en excluant les pistes *Forced*) pour l'activer par défaut.
-* **Films, Séries, Cartoons, Spectacles (Lecteurs S, U, V, X, Y) :** Force la piste **Audio Française** (`fra`/`fr`) par défaut et configure la première piste de sous-titres **Français Forced** (textes traduits à l'écran) en mode *Default & Forced*.
-* *Note : Tous les drapeaux par défaut ou conflictuels des autres pistes (pistes anglaises, commentaires...) sont automatiquement purgés à 0 pour éviter les mauvaises sélections des lecteurs clients.*
+Une carte graphique compatible NVENC pour l'accélération matérielle.
 
-### 4. Smart Encodage (4K intelligent & ACLs)
-* **Préservation de la 4K :** Si `ffprobe` détecte une source Ultra HD (largeur > 1920px), le script retire la limite de redimensionnement de HandBrake mais applique le profil qualitatif constant (CQ 28) en HEVC 10-bit matériel (`nvenc_h265_10bit`).
-* **Protection Sécurisée :** L'encodage s'effectue dans un répertoire temporaire (`Z:\Encoder_Emby`). Lors de la substitution finale, le script applique les permissions de fichiers originales (**Droits ACL Windows**) de l'ancien fichier sur le nouveau avant de purger l'élément `.old`.
+Les outils tiers installés dans les chemins par défaut du script :
 
-### 5. Générateur Avancé de Trailers et Backdrops
-Pour les arborescences de séries, le script inspecte la présence de dossiers thématiques :
-* **Bande-annonce (Trailer) :** Extrait automatiquement 3 séquences distinctes de 25 secondes à des moments clés (5e, 10e et 15e minute) d'un premier épisode et les fusionne de manière complexe (`filter_complex concat`) en un fichier `theme.mkv` fluide avec piste audio.
-* **Arrière-plan (Backdrop) :** Isole une séquence continue de 30 secondes à partir de la 10e minute (évitant ainsi les logos d'introduction de production) pour les menus animés de l'interface Emby.
+C:\Tools\HandBrake\
 
-### 6. Verrouillage Anti-Écrasement des NFO (`.NET XmlDocument`)
-Afin d'empêcher les moteurs de scrap d'Emby ou Jellyfin d'écraser vos titres personnalisés, le script utilise le moteur XML natif de Windows :
-* Il analyse ou génère les fichiers `.nfo` (`movie`, `episodedetails`, `tvshow`).
-* Il synchronise les balises `<title>` et `<sorttitle>` avec le nom réel du dossier de votre média.
-* Il injecte et fige la balise `<lockedfields>Title|SortTitle</lockedfields>`, garantissant l'immunité de vos métadonnées lors des futurs scans système.
+C:\Tools\ffmpeg\
 
----
+C:\Tools\MKVToolNix\
 
-## 📁 Configuration des Chemins Requise
+Configuration des disques : ⚠️ Les lettres de lecteurs utilisées dans le script (S à Y) et les chemins associés doivent être adaptés au préalable dans le code selon votre propre configuration machine.
 
-Pour que le script s'exécute sans erreur, veillez à respecter la structure de dossiers Windows suivante :
+⚙## ️ Utilisation
+Modifiez les chemins et lettres de lecteurs dans le script pour les faire correspondre à votre installation.
 
-* **Outils applicatifs :**
-  * `C:\Tools\HandBrake\HandBrakeCLI.exe`
-  * `C:\Tools\ffmpeg\bin\` (`ffmpeg.exe`, `ffprobe.exe`)
-  * `C:\Tools\MKVToolNix\` (`mkvpropedit.exe`)
-* **Stockage de travail et Logs :**
-  * `Z:\Encoder_Emby\` (Sert de zone tampon d'encodage et centralise l'arborescence des journaux `/Encodage`, `/Audio`, `/Erreurs`).
-* **Montages Réseau (Lettres dédiées) :**
-  * `S:` à `Y:` mappés vers vos catégories respectives (Films, Séries, Animes, etc.).
+Lancez le script PowerShell (Emby Encodage.ps1).
 
----
+Le menu principal s'affiche, vous permettant de choisir l'action souhaitée :
 
-## 🛠️ Utilisation
+[S à Y] : Traiter un lecteur ou une catégorie spécifique.
 
-1. Ouvrez une invite de commande **PowerShell en mode Administrateur**.
-2. Positionnez-vous dans le dossier du script et exécutez-le :
-   ```powershell
-   .\Emby_Encodage.ps1
+[A] : Lancer le traitement global de tous les disques configurés.
+
+[H / F / K] : Mettre à jour HandBrake, FFmpeg ou MKVToolNix.
+
+[P] : Appliquer les tags hvc1 ciblés pour la compatibilité Apple.
+
+[Q] : Quitter le script.
